@@ -1,18 +1,39 @@
 {
-  "name": "react-example",
+  "name": "sigai",
+  "description": "XAUUSD AI Core - SMC Scalping Bot with AI-Driven Code Mechanic",
+  "version": "0.0.1",
   "private": true,
-  "version": "0.0.0",
   "type": "module",
+  "author": {
+    "name": "muhadar2711-ctrl"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/muhadar2711-ctrl/Sigai.git"
+  },
   "engines": {
     "node": ">=20.0.0"
   },
+  "keywords": [
+    "trading",
+    "scalping",
+    "smc",
+    "ai",
+    "xauusd",
+    "forex",
+    "bot"
+  ],
   "scripts": {
     "dev": "tsx server.ts",
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit",
+    "lint": "tsc --noEmit && eslint src/ server/",
+    "format": "prettier --write \"src/**/*.ts\" \"src/**/*.tsx\" \"server/**/*.ts\" \"tests/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"src/**/*.tsx\" \"server/**/*.ts\" \"tests/**/*.ts\"",
+    "type-check": "tsc --noEmit",
     "test": "tsx tests/system.test.ts"
   },
   "dependencies": {
@@ -59,8 +80,14 @@
     "@types/node-telegram-bot-api": "^0.64.14",
     "@types/opossum": "^8.1.9",
     "@types/ws": "^8.18.1",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
     "autoprefixer": "^10.4.21",
     "esbuild": "^0.25.0",
+    "eslint": "^8.56.0",
+    "eslint-plugin-react": "^7.33.2",
+    "eslint-plugin-react-hooks": "^4.6.0",
+    "prettier": "^3.2.5",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
