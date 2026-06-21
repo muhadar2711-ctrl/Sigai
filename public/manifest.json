@@ -1,0 +1,16 @@
+{
+  "name": "XAUUSD SMC Scalper",
+  "short_name": "XAUUSD SMC",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#070B14",
+  "theme_color": "#070B14",
+  "description": "Institutional Core Smart Money Concepts Bot",
+  "icons": [
+    {
+      "src": "/vite.svg", 
+      "sizes": "192x192",
+      "type": "image/svg+xml"
+    }
+  ]
+}
