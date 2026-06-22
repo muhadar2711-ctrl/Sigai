@@ -63,7 +63,7 @@ function loadHistory(): ChatMessage[] {
 }
 
 /**
- * Classify error into user-friendly message
+ * Classify error into user-friendly message with accurate severity
  */
 function classifyError(err: any): { message: string; severity: "error" | "warning" | "info" } {
   const msg = (err?.message || "").toLowerCase();
@@ -81,6 +81,14 @@ function classifyError(err: any): { message: string; severity: "error" | "warnin
   if (status === 401 || status === 403 || msg.includes("unauthorized") || msg.includes("admin_secret")) {
     return {
       message: "Otentikasi gagal. Periksa admin_secret di environment.",
+      severity: "warning",
+    };
+  }
+
+  // Rate limit
+  if (status === 429 || msg.includes("rate limit") || msg.includes("too many requests")) {
+    return {
+      message: "Terlalu banyak request. Tunggu sebentar lalu coba lagi.",
       severity: "warning",
     };
   }
@@ -125,11 +133,31 @@ function classifyError(err: any): { message: string; severity: "error" | "warnin
     };
   }
 
+  // Malformed response (parsing error)
+  if (msg.includes("invalid json") || msg.includes("malformed") || msg.includes("parse")) {
+    return {
+      message: "Response dari server tidak valid. Backend mungkin mengembalikan format yang salah.",
+      severity: "error",
+    };
+  }
+
   // Default
   return {
     message: err?.message || "Permintaan gagal diproses. Periksa koneksi backend dan konfigurasi env.",
     severity: "error",
   };
+}
+
+/**
+ * Extract clean base64 data from a base64 string or data URL
+ * Returns pure base64 without data URL prefix
+ */
+function extractBase64(img: string): string {
+  if (!img) return "";
+  if (img.includes(",")) {
+    return img.split(",")[1];
+  }
+  return img;
 }
 
 export function AIChat() {
@@ -287,11 +315,17 @@ export function AIChat() {
           content: m.content,
         }));
 
+      // CRITICAL FIX: Send full base64 data URL — the backend will strip the prefix
+      // This ensures compatibility with both Gemini (needs pure base64) and OpenAI (needs data URL)
+      const imagesBase64 = currentImages.length > 0 
+        ? currentImages.map(img => extractBase64(img)) 
+        : undefined;
+
       const response = await apiFetch("/ai/chat", {
         method: "POST",
         body: JSON.stringify({
           message: trimmed || "Tolong analisis chart yang disertakan ini.",
-          images_base64: currentImages.length > 0 ? currentImages.map(d => d.split(",")[1]) : undefined,
+          images_base64: imagesBase64,
           history: historyPayload,
           mode: "trading",
           session_id: localStorage.getItem("sigai_ai_session_id") || undefined,
@@ -319,16 +353,38 @@ export function AIChat() {
         return;
       }
 
+      // CRITICAL FIX: Check for valid response with better error handling
+      const responseContent = response?.response;
+      const providerStatus = response?.provider_status;
+      
+      if (!responseContent && !response?.success) {
+        // Server returned success: false without error message
+        const errMsg = "Server mengembalikan response kosong tanpa status error. Kemungkinan routing atau parsing error di backend.";
+        console.error("[AIChat] Empty response:", response);
+        setErrorText(errMsg);
+        const aiMessage: ChatMessage = {
+          id: makeId(),
+          role: "model",
+          content: `⚠️ **Error**: ${errMsg}`,
+          timestamp: Date.now(),
+          meta: { provider_status: providerStatus || "error" },
+        };
+        setMessages((prev) => [...prev, aiMessage]);
+        return;
+      }
+
+      if (!responseContent && response?.success) {
+        // Success but no content — this is a malformed response
+        console.warn("[AIChat] Success but no response content:", response);
+      }
+
       const aiMessage: ChatMessage = {
         id: makeId(),
         role: "model",
-        content:
-          response?.response ||
-          response?.message ||
-          "Backend tidak mengembalikan respons yang valid.",
+        content: responseContent || "AI merespons tetapi tidak mengembalikan teks. Kemungkinan model hanya memanggil tool internal.",
         timestamp: Date.now(),
         meta: {
-          provider_status: response?.provider_status,
+          provider_status: providerStatus,
           context_summary: response?.context_summary,
           intermediate_steps: response?.intermediate_steps,
         },
