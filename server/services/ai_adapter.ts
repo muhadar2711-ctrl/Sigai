@@ -1,8 +1,7 @@
-import { GoogleGenerativeAI, Content, Part, Tool } from '@google/generative-ai';
-import { promises as fs } from 'fs';
-import path from 'path';
 
-// Interfaces
+import { GoogleGenerativeAI, Content, Part, Tool } from '@google/generative-ai';
+
+// --- Interfaces ---
 export interface TradeSignal {
   action: 'BUY' | 'SELL';
   symbol: string;
@@ -12,23 +11,23 @@ export interface TradeSignal {
 }
 
 export interface AIProvider {
-  generateContent(history: any[], newMessage: string, image: string | null, temperature: number, model: string): Promise<any>;
+  generateContent(history: any[], newMessage: string, images: string[] | null, temperature: number, model: string): Promise<any>;
 }
 
-// --- Tool Definitions ---
+// --- Tool Definitions untuk Gemini ---
 const tradeSignalTool: Tool = {
   functionDeclarations: [
     {
       name: 'execute_trade_signal',
-      description: 'Executes a trade signal for BUY or SELL actions.',
+      description: 'Mengeksekusi sinyal perdagangan untuk tindakan BUY atau SELL.',
       parameters: {
         type: 'OBJECT',
         properties: {
-          action: { type: 'STRING', description: "The trade action, either 'BUY' or 'SELL'." },
-          symbol: { type: 'STRING', description: "The financial instrument symbol, e.g., 'XAUUSD'." },
-          stopLoss: { type: 'NUMBER', description: 'The price at which to close the position at a loss.' },
-          takeProfit: { type: 'NUMBER', description: 'The price at which to close the position at a profit.' },
-          risk: { type: 'NUMBER', description: 'The percentage of account balance to risk.' },
+          action: { type: 'STRING', description: "Aksi perdagangan, 'BUY' atau 'SELL'." },
+          symbol: { type: 'STRING', description: "Simbol instrumen keuangan, misal, 'XAUUSD'." },
+          stopLoss: { type: 'NUMBER', description: 'Harga untuk menutup posisi saat rugi.' },
+          takeProfit: { type: 'NUMBER', description: 'Harga untuk menutup posisi saat untung.' },
+          risk: { type: 'NUMBER', description: 'Persentase saldo akun yang dipertaruhkan.' },
         },
         required: ['action', 'symbol', 'stopLoss', 'takeProfit', 'risk'],
       },
@@ -36,49 +35,41 @@ const tradeSignalTool: Tool = {
   ],
 };
 
-// --- Gemini Provider ---
+// --- Gemini Provider (FIXED) ---
 
-const transformToGoogleMessages = (history: any[], newMessage: string, image: string | null): Content[] => {
-  const googleHistory: Content[] = history.map((msg) => {
+/**
+ * Membangun payload yang valid untuk Google Gemini API.
+ * Mengkonversi riwayat obrolan sederhana dan gambar base64 menjadi format Content[] yang benar.
+ */
+const buildGeminiPayload = (history: any[], newMessage: string, images: string[] | null): Content[] => {
+  const contents: Content[] = history.map(msg => {
+    // Frontend mengirim role 'assistant', backend Sigai perlu 'model'
     const role = msg.role === 'user' ? 'user' : 'model';
-    
-    // Handle cases where content is a simple string or a structured object
-    if (typeof msg.content === 'string') {
-      return { role, parts: [{ text: msg.content }] };
-    } else if (Array.isArray(msg.content)) { // OpenAI-style content array
-      const parts: Part[] = msg.content.map((item: any) => {
-        if (item.type === 'text') {
-          return { text: item.text };
-        }
-        if (item.type === 'image_url' && item.image_url?.url) {
-            const [header, data] = item.image_url.url.split(',');
-            const mimeType = header.match(/:(.*?);/)?.[1] || 'image/jpeg';
-            return {
-                inlineData: {
-                    mimeType,
-                    data,
-                },
-            };
-        }
-        return { text: '' }; // Should not happen with valid inputs
-      }).filter(part => part.text !== '');
-      return { role, parts };
-    }
-    return { role, parts: [{ text: '' }] }; // Fallback for unexpected format
+    return { role, parts: [{ text: msg.content }] };
   });
 
-  // Add the new user message
-  const newParts: Part[] = [{ text: newMessage }];
-  if (image) {
-    const [header, data] = image.split(',');
-    const mimeType = header.match(/:(.*?);/)?.[1] || 'image/jpeg';
-    newParts.push({ inlineData: { mimeType, data } });
+  // Buat bagian untuk pesan baru dari pengguna
+  const userParts: Part[] = [{ text: newMessage }];
+  
+  // Tambahkan gambar jika ada
+  if (images && images.length > 0) {
+    for (const imageBase64 of images) {
+      // Asumsikan gambar adalah JPEG jika tidak ada header, ini lebih aman
+      const mimeType = 'image/jpeg'; 
+      userParts.push({
+        inlineData: {
+          mimeType,
+          data: imageBase64, // Frontend sudah mengirim base64 murni
+        },
+      });
+    }
   }
-  googleHistory.push({ role: 'user', parts: newParts });
 
-  return googleHistory;
+  // Tambahkan pesan baru dari pengguna ke dalam history
+  contents.push({ role: 'user', parts: userParts });
+
+  return contents;
 };
-
 
 class GoogleGeminiProvider implements AIProvider {
   private genAI: GoogleGenerativeAI;
@@ -87,50 +78,55 @@ class GoogleGeminiProvider implements AIProvider {
     this.genAI = new GoogleGenerativeAI(apiKey);
   }
 
-  async generateContent(history: any[], newMessage: string, image: string | null, temperature: number, modelName: string): Promise<any> {
+  async generateContent(history: any[], newMessage: string, images: string[] | null, temperature: number, modelName: string): Promise<any> {
     try {
       const model = this.genAI.getGenerativeModel({ model: modelName, tools: [tradeSignalTool] });
       
-      const chatHistory = transformToGoogleMessages(history, newMessage, image);
+      // Gunakan fungsi build payload yang sudah diperbaiki
+      const contents = buildGeminiPayload(history, newMessage, images);
       
       const result = await model.generateContentStream({ 
-        contents: chatHistory,
+        contents: contents,
         generationConfig: {
           temperature,
         }
       });
 
-      // For simplicity, we will aggregate the streamed response here.
-      // A production implementation should stream this back to the client.
       let aggregatedResponse = '';
       let toolCalls: any[] = [];
 
       for await (const chunk of result.stream) {
-          if (chunk.functionCalls) {
-              toolCalls.push(...chunk.functionCalls);
-          }
-          const chunkText = chunk.text();
-          if(chunkText) {
-            aggregatedResponse += chunkText;
-          }
+        // Deteksi dan kumpulkan panggilan tool
+        if (chunk.functionCalls) {
+          toolCalls.push(...chunk.functionCalls);
+        }
+        
+        // Kumpulkan teks respons
+        const chunkText = chunk.text();
+        if(chunkText) {
+          aggregatedResponse += chunkText;
+        }
       }
       
+      // Jika ada panggilan tool, kembalikan dalam format yang diharapkan
       if (toolCalls.length > 0) {
         return { tool_calls: toolCalls };
       }
 
+      // Kembalikan respons teks biasa
       return { response: aggregatedResponse };
 
     } catch (error: any) {
-      console.error('Error generating content with Google Gemini:', error);
-      // Check for specific proto-related errors if possible
-      if (error.message.includes('Request payload is invalid')) {
-        throw new Error(`Invalid request payload for Gemini. Check data format. Original Error: ${error.message}`);
+      console.error('Error saat generate content dengan Google Gemini:', error);
+      // Berikan pesan error yang lebih spesifik untuk debugging
+      if (error.message.includes('invalid') || error.message.includes('payload')) {
+        throw new Error(`Payload request tidak valid untuk Gemini. Cek format data. Error asli: ${error.message}`);
       }
-      throw new Error(`Gemini API Error: ${error.message}`);
+      throw new Error(`Error API Gemini: ${error.message}`);
     }
   }
 }
+
 
 // --- AI Adapter ---
 
@@ -141,24 +137,29 @@ class AIAdapter {
     this.provider = provider;
   }
 
-  async generateContent(history: any[], newMessage: string, image: string | null, temperature: number, model: string) {
-    return this.provider.generateContent(history, newMessage, image, temperature, model);
+  async generateContent(history: any[], newMessage: string, images: string[] | null, temperature: number, model: string) {
+    return this.provider.generateContent(history, newMessage, images, temperature, model);
   }
 }
 
+// --- Inisialisasi Provider Default ---
 let defaultProvider: AIProvider;
 
 if (process.env.GEMINI_API_KEY) {
   defaultProvider = new GoogleGeminiProvider(process.env.GEMINI_API_KEY);
 } else {
-  // Fallback provider if no API key is present
+  // Fallback jika tidak ada API key
   class FallbackProvider implements AIProvider {
-    async generateContent(history: any[], newMessage: string, image: string | null, temperature: number, model: string): Promise<any> {
-      console.warn('No AI provider API key found. Using fallback provider.');
-      return Promise.resolve({ response: "This is a fallback response as no AI provider is configured." });
+    async generateContent(history: any[], newMessage: string, images: string[] | null, temperature: number, model: string): Promise<any> {
+      console.warn('API Key AI tidak ditemukan. Menggunakan fallback provider.');
+      return Promise.resolve({ response: "Ini adalah respons fallback karena tidak ada provider AI yang dikonfigurasi." });
     }
   }
   defaultProvider = new FallbackProvider();
 }
 
 export const aiAdapter = new AIAdapter(defaultProvider);
+
+// Ekspor fungsi pembantu jika diperlukan di tempat lain
+export { buildGeminiPayload };
+

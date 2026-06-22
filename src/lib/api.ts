@@ -1,9 +1,11 @@
+
 import { TradeSignal } from '../../server/services/ai_adapter';
 
+// Fungsi ini tetap tidak berubah, digunakan oleh AIChat.tsx
 export const sendChatMessage = async (
   message: string,
   history: any[],
-  image: string | null,
+  images: string[] | null, // Diperbarui untuk mendukung beberapa gambar
   temperature: number,
   model: string,
   provider: string
@@ -14,7 +16,7 @@ export const sendChatMessage = async (
     body: JSON.stringify({
       message,
       history,
-      image,
+      images_base64: images, // Kirim sebagai images_base64
       temperature,
       model,
       provider,
@@ -23,7 +25,7 @@ export const sendChatMessage = async (
 
   if (!response.ok) {
     const errorBody = await response.text();
-    console.error('Failed to send chat message:', response.status, errorBody);
+    console.error('Gagal mengirim pesan chat:', response.status, errorBody);
     throw new Error(
       `Network response was not ok. Status: ${response.status}. Body: ${errorBody}`
     );
@@ -32,59 +34,43 @@ export const sendChatMessage = async (
   return response.json();
 };
 
-export const getBalance = async () => {
-  const response = await fetch('/api/v1/mt5/balance', {
-    headers: {
-      'Content-Type': 'application/json',
-      'admin-secret': process.env.NEXT_PUBLIC_ADMIN_SECRET || '',
-    },
-  });
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error('Failed to fetch balance:', errorText);
-    throw new Error('Failed to fetch balance');
-  }
-  return response.json();
-};
-
-export const getPositions = async () => {
-  const response = await fetch('/api/v1/mt5/positions', {
-    headers: {
-      'Content-Type': 'application/json',
-      'admin-secret': process.env.NEXT_PUBLIC_ADMIN_SECRET || '',
-    },
-  });
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error('Failed to fetch positions:', errorText);
-    throw new Error('Failed to fetch positions');
-  }
-  return response.json();
-};
-
+/**
+ * FUNGSI BARU: Mengeksekusi sinyal perdagangan melalui endpoint terpusat
+ */
 export const executeTrade = async (signal: TradeSignal) => {
-  const response = await fetch('/api/v1/mt5/webhook', {
+  const response = await fetch('/api/v1/trade/execute', { // Endpoint baru yang aman
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'admin-secret': process.env.NEXT_PUBLIC_ADMIN_SECRET || '',
+      // Otentikasi harus ditangani oleh middleware di backend jika diperlukan
     },
     body: JSON.stringify(signal),
   });
 
   if (!response.ok) {
     const errorBody = await response.text();
-    console.error('Failed to execute trade:', response.status, errorBody);
-    throw new Error(`Failed to execute trade. Status: ${response.status}`);
+    console.error('Gagal mengeksekusi perdagangan:', response.status, errorBody);
+    throw new Error(`Gagal mengeksekusi perdagangan. Status: ${response.status}`);
   }
 
   return response.json();
 };
 
+/**
+ * FUNGSI DIPERBARUI: Mengambil status gabungan dari server M
+ */
 export const getMcpStatus = async () => {
-  const response = await fetch('/api/mcp/status');
+  const response = await fetch('/api/mcp/status'); // Endpoint baru yang andal
   if (!response.ok) {
-    throw new Error('Failed to fetch MCP status');
+    // Coba parse body error jika ada untuk pesan yang lebih baik
+    const errorData = await response.json().catch(() => null);
+    if (errorData && errorData.error) {
+      throw new Error(errorData.error);
+    }
+    throw new Error('Gagal mengambil status MCP');
   }
   return response.json();
 };
+
+// Fungsi getBalance dan getPositions telah usang dan dihapus.
+// Status akun sekarang menjadi bagian dari respons getMcpStatus.
