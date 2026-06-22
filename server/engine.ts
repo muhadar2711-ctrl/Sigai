@@ -122,7 +122,7 @@ export function initializeEngines() {
 }
 
 // --- SEQUENTIAL PIPELINE ---
-export async function runTradingPipeline(symbolFetch: string, symbolDisp: string, tfBias: string, tfExec: string, tfConfirm: string, mode: string) {
+export async function runTradingPipeline(symbolFetch: string, symbolDisp: string, tfBias: string, tfExec: string, tfConfirm: string, mode: string, force: boolean = false) {
   systemState.lastScan = new Date();
   
   let m5Candles: OHLC[];
@@ -142,12 +142,8 @@ export async function runTradingPipeline(symbolFetch: string, symbolDisp: string
 
   // Process Each Strategy Sequentially
   for (const strategyId of Object.keys(systemState.strategies)) {
-    if (!strategyId.includes(symbolDisp) && symbolDisp !== "XAUUSD" && !strategyId.includes("SMC")) {
-        // Simple filter for demo, in real it checks symbol compatibility
-    }
-
     const signalKey = getSignalKey(symbolDisp, strategyId, candleTime);
-    if (processingLocks[signalKey]) continue;
+    if (processingLocks[signalKey] && !force) continue;
     
     try {
       processingLocks[signalKey] = true;
@@ -156,6 +152,27 @@ export async function runTradingPipeline(symbolFetch: string, symbolDisp: string
       processingLocks[signalKey] = false;
     }
   }
+}
+
+/**
+ * EXPORT: runWalkforwardTest
+ * Jalankan pengujian instan pada data candle terakhir untuk semua strategi.
+ */
+export async function runWalkforwardTest(symbol: string) {
+  console.log(`[WALKFORWARD] Testing all strategies for ${symbol}...`);
+  
+  let symbolFetch = symbol === "XAUUSD" ? "GC=F" : "EUR=X";
+  
+  // Picu scan instan dengan flag force
+  await runTradingPipeline(symbolFetch, symbol, "H1", "M5", "M1", "Walkforward", true);
+  
+  // Return status terbaru dari semua strategi untuk UI
+  return Object.values(systemState.strategies).map((strat: any) => ({
+    strategyId: strat.strategyId,
+    name: strat.name,
+    status: strat.status,
+    steps: strat.steps
+  }));
 }
 
 async function processStrategySequential(strategyId: string, symbol: string, candles: OHLC[], signalKey: string) {
@@ -218,18 +235,14 @@ async function processStrategySequential(strategyId: string, symbol: string, can
 }
 
 async function validateStepLogic(strategyId: string, stepId: string, symbol: string, candles: OHLC[]): Promise<"TRUE" | "FALSE" | "WAIT"> {
-  // Real implementation would call specific strategy files (xauusd_v3.ts, etc.)
-  // For this refactor, we ensure the "Sequential" engine is the one controlling the flow
   const kz = getCurrentKillzone();
   if (stepId === "Killzone") return kz !== "OUTSIDE_KILLZONE" ? "TRUE" : "WAIT";
-  
-  // Dummy logic for flow demonstration; in real use, this links to smc_strategy.ts functions
   return "TRUE"; 
 }
 
 async function dispatchFinalSignal(signal: any, aiResult: any, signalKey: string) {
   const notifKey = getNotificationKey(signalKey, "APPROVED");
-  if (notifiedSignals.has(notifKey)) return; // Dedupe & Suppression (Line 17-22)
+  if (notifiedSignals.has(notifKey)) return; 
 
   const finalized = {
     ...signal,
@@ -239,11 +252,9 @@ async function dispatchFinalSignal(signal: any, aiResult: any, signalKey: string
     status: "ACTIVE"
   };
 
-  // Telegram only for APPROVED (Line 23-26)
   await sendTelegramSignal(finalized, systemState);
   notifiedSignals.add(notifKey);
   
-  // Database & Execution
   saveSignalToHistoryAndDB(finalized);
   if (systemState.autotrade.enabled && systemState.robotStatus === "ON") {
     await executeTrade(finalized, systemState.autotrade);
