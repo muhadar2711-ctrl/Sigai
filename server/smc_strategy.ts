@@ -34,43 +34,48 @@ export function detectSwing(
   return null;
 }
 
+/**
+ * Pertajam deteksi Liquidity Sweep (Anticipating market_structure.md & liquidity.md)
+ * Wajib konfirmasi WICK melampaui Swing, tapi BODY CLOSE kembali ke dalam range.
+ */
 export function detectLiquiditySweep(
   candles: OHLC[],
   swings: { type: "HIGH" | "LOW"; value: number; index: number }[],
 ) {
   if (candles.length < 5 || swings.length === 0) return null;
   const current = candles[candles.length - 1];
-  const prev = candles[candles.length - 2];
 
-  // Look at recent candles to see if they swept a major swing point
+  // Audit 10 swing terakhir
   for (let i = swings.length - 1; i >= Math.max(0, swings.length - 10); i--) {
     const swing = swings[i];
+    
+    // BEARISH SWEEP: High melampaui Swing High, tapi Close di bawah Swing High (Rejection)
     if (swing.type === "HIGH") {
-      // Bearish Sweep: price went above swing high, but closed below it
-      if (
-        (current.high > swing.value && current.close < swing.value) ||
-        (prev.high > swing.value && prev.close < swing.value)
-      ) {
+      if (current.high > swing.value && current.close < swing.value) {
         return {
           type: "BEARISH_SWEEP",
-          price: swing.value,
-          candleIndex:
-            current.high > swing.value
-              ? candles.length - 1
-              : candles.length - 2,
+          evidence: {
+            swingPrice: swing.value,
+            wickHigh: current.high,
+            bodyClose: current.close,
+            sweepDistancePips: (current.high - swing.value) * 10
+          },
+          candleIndex: candles.length - 1,
         };
       }
-    } else {
-      // Bullish Sweep: price went below swing low, but closed above it
-      if (
-        (current.low < swing.value && current.close > swing.value) ||
-        (prev.low < swing.value && prev.close > swing.value)
-      ) {
+    } 
+    // BULLISH SWEEP: Low melampaui Swing Low, tapi Close di atas Swing Low (Rejection)
+    else if (swing.type === "LOW") {
+      if (current.low < swing.value && current.close > swing.value) {
         return {
           type: "BULLISH_SWEEP",
-          price: swing.value,
-          candleIndex:
-            current.low < swing.value ? candles.length - 1 : candles.length - 2,
+          evidence: {
+            swingPrice: swing.value,
+            wickLow: current.low,
+            bodyClose: current.close,
+            sweepDistancePips: (swing.value - current.low) * 10
+          },
+          candleIndex: candles.length - 1,
         };
       }
     }
@@ -78,140 +83,76 @@ export function detectLiquiditySweep(
   return null;
 }
 
+/**
+ * Perbaikan analyzeStructure: Membedakan Swing Structure (Major) vs Internal Structure (Minor)
+ */
 export function analyzeStructure(candles: OHLC[]) {
-  const swings = <{ type: "HIGH" | "LOW"; value: number; index: number }[]>[];
+  const allSwings = <{ type: "HIGH" | "LOW"; value: number; index: number }[]>[];
   for (let i = 2; i < candles.length - 2; i++) {
     const swing = detectSwing(candles, i);
-    if (swing) swings.push(swing);
+    if (swing) allSwings.push(swing);
   }
 
-  let trend: "BULLISH" | "BEARISH" | "NEUTRAL" = "NEUTRAL";
-  let lastBOS: "BULLISH" | "BEARISH" | null = null;
-  let lastCHOCH: "BULLISH" | "BEARISH" | null = null;
+  // Filter Swing Structure (Major) berdasarkan signifikansi pergerakan (Contoh: minimal 5 pips)
+  const swingStructure = allSwings.filter((s, idx, arr) => {
+    if (idx === 0) return true;
+    const prev = arr[idx - 1];
+    return Math.abs(s.value - prev.value) * 10 > 5;
+  });
 
-  const highs = swings.filter((s) => s.type === "HIGH");
-  const lows = swings.filter((s) => s.type === "LOW");
+  const highs = swingStructure.filter((s) => s.type === "HIGH");
+  const lows = swingStructure.filter((s) => s.type === "LOW");
 
   let lastSwingHigh = highs[highs.length - 1];
   let prevSwingHigh = highs[highs.length - 2];
   let lastSwingLow = lows[lows.length - 1];
   let prevSwingLow = lows[lows.length - 2];
 
+  let trend: "BULLISH" | "BEARISH" | "NEUTRAL" = "NEUTRAL";
   let scoreBull = 0;
   let scoreBear = 0;
 
-  // Evaluate basic trend from previous swings
+  // Analisa Swing Structure (Major)
   if (lastSwingHigh && prevSwingHigh && lastSwingLow && prevSwingLow) {
-    if (
-      lastSwingHigh.value > prevSwingHigh.value &&
-      lastSwingLow.value > prevSwingLow.value
-    ) {
-      scoreBull += 2;
-    } else if (
-      lastSwingHigh.value < prevSwingHigh.value &&
-      lastSwingLow.value < prevSwingLow.value
-    ) {
-      scoreBear += 2;
-    } else if (lastSwingHigh.value > prevSwingHigh.value) {
-      scoreBull += 1; // Relaxed
-    } else if (lastSwingLow.value < prevSwingLow.value) {
-      scoreBear += 1; // Relaxed
-    }
+    if (lastSwingHigh.value > prevSwingHigh.value && lastSwingLow.value > prevSwingLow.value) scoreBull += 3;
+    else if (lastSwingHigh.value < prevSwingHigh.value && lastSwingLow.value < prevSwingLow.value) scoreBear += 3;
   }
 
+  // Analisa Internal Structure (Trend jangka pendek)
   const latestClose = candles[candles.length - 1]?.close || 0;
-
-  // Simple EMA estimate
-  if (candles.length > 50) {
-    const sum50 = candles.slice(-50).reduce((a, b) => a + b.close, 0);
-    const ema50 = sum50 / 50;
-    if (latestClose > ema50) scoreBull += 1;
+  if (candles.length > 20) {
+    const sum20 = candles.slice(-20).reduce((a, b) => a + b.close, 0);
+    const sma20 = sum20 / 20;
+    if (latestClose > sma20) scoreBull += 1;
     else scoreBear += 1;
-  }
-
-  // Simple RSI Estimate (14 period)
-  if (candles.length > 15) {
-    let gains = 0,
-      losses = 0;
-    for (let i = candles.length - 14; i < candles.length; i++) {
-      const change = candles[i].close - candles[i - 1].close;
-      if (change > 0) gains += change;
-      else losses -= change;
-    }
-    const avgGain = gains / 14;
-    const avgLoss = losses / 14;
-    const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
-    const rsi = 100 - 100 / (1 + rs);
-
-    if (rsi < 35)
-      scoreBull += 1; // Oversold -> likelihood to bounce up
-    else if (rsi > 65)
-      scoreBear += 1; // Overbought -> likelihood to bounce down
-    else if (rsi > 50) scoreBull += 0.5;
-    else if (rsi < 50) scoreBear += 0.5;
-  }
-
-  // Structure Event Detection
-  if (lastSwingHigh && prevSwingHigh) {
-    if (lastSwingHigh.value > prevSwingHigh.value) {
-      lastBOS = "BULLISH";
-      scoreBull += 1;
-    }
-  }
-  if (lastSwingLow && prevSwingLow) {
-    if (lastSwingLow.value < prevSwingLow.value) {
-      lastBOS = "BEARISH";
-      scoreBear += 1;
-    }
-  }
-
-  if (
-    scoreBear > scoreBull &&
-    lastSwingHigh &&
-    prevSwingHigh &&
-    lastSwingHigh.value > prevSwingHigh.value
-  ) {
-    lastCHOCH = "BULLISH";
-    scoreBull += 2;
-  }
-  if (
-    scoreBull > scoreBear &&
-    lastSwingLow &&
-    prevSwingLow &&
-    lastSwingLow.value < prevSwingLow.value
-  ) {
-    lastCHOCH = "BEARISH";
-    scoreBear += 2;
   }
 
   if (scoreBull >= 3) trend = "BULLISH";
   else if (scoreBear >= 3) trend = "BEARISH";
-  else if (scoreBull > scoreBear)
-    trend = "BULLISH"; // Give a bias rather than NEUTRAL if tie broken
-  else if (scoreBear > scoreBull) trend = "BEARISH";
-  else trend = "NEUTRAL";
 
-  const lastSweep = detectLiquiditySweep(candles, swings);
+  const lastSweep = detectLiquiditySweep(candles, swingStructure);
 
   return {
     trend,
-    lastBOS,
-    lastCHOCH,
     lastSwingHigh,
     lastSwingLow,
-    swings,
+    swingStructureCount: swingStructure.length,
     score: { bull: scoreBull, bear: scoreBear },
     lastSweep,
   };
 }
 
+/**
+ * Perbaikan detectFVG: Validasi ukuran relatif terhadap ATR (Mencegah Noise)
+ */
 export function detectFVG(candles: OHLC[]) {
-  // Looks for the most recent unmitigated FVG in the last 20 candles
   if (candles.length < 4) return null;
+  const atr = calculateATR(candles, 14);
+  const minFvgSize = atr * 0.15; // FVG wajib minimal 15% dari ATR
 
-  const lookback = Math.min(candles.length - 1, 25);
+  const lookback = Math.min(candles.length - 1, 20);
 
-  for (let i = candles.length - 2; i >= candles.length - lookback; i--) {
+  for (let i = candles.length - 1; i >= candles.length - lookback; i--) {
     const c1 = candles[i - 2];
     const c2 = candles[i - 1]; // Expansion candle
     const c3 = candles[i];
@@ -219,35 +160,37 @@ export function detectFVG(candles: OHLC[]) {
     if (!c1 || !c2 || !c3) continue;
 
     // Bullish FVG
-    if (c1.high < c3.low) {
-      let isMitigated = false;
-      // Check if price filled the gap after c3
+    const bullGap = c3.low - c1.high;
+    if (bullGap > minFvgSize) {
+      let mitigated = false;
       for (let j = i + 1; j < candles.length; j++) {
-        if (candles[j].low <= c1.high) isMitigated = true;
+        if (candles[j].low <= c1.high) mitigated = true;
       }
-      if (!isMitigated) {
+      if (!mitigated) {
         return {
           type: "BULLISH",
           high: c3.low,
           low: c1.high,
           mid: (c3.low + c1.high) / 2,
+          sizePips: bullGap * 10
         };
       }
     }
 
     // Bearish FVG
-    if (c1.low > c3.high) {
-      let isMitigated = false;
-      // Check if price filled the gap after c3
+    const bearGap = c1.low - c3.high;
+    if (bearGap > minFvgSize) {
+      let mitigated = false;
       for (let j = i + 1; j < candles.length; j++) {
-        if (candles[j].high >= c1.low) isMitigated = true;
+        if (candles[j].high >= c1.low) mitigated = true;
       }
-      if (!isMitigated) {
+      if (!mitigated) {
         return {
           type: "BEARISH",
           high: c1.low,
           low: c3.high,
           mid: (c1.low + c3.high) / 2,
+          sizePips: bearGap * 10
         };
       }
     }
@@ -285,75 +228,62 @@ export function calculateFibonacci(swingLow: number, swingHigh: number) {
   };
 }
 
+/**
+ * Perbaikan validateEntry: Strict Premium/Discount Zone
+ * Jangan BUY di Premium (Mahal), Jangan SELL di Discount (Murah).
+ */
 export function validateEntry(candles: OHLC[], structureState: any, fvg: any) {
   const currentPrice = candles[candles.length - 1].close;
-
-  const checklist = {
-    bias: structureState.trend !== "NEUTRAL" ? structureState.trend : null,
+  
+  const evidence = {
+    bias: structureState.trend,
+    lastSweep: structureState.lastSweep ? structureState.lastSweep.type : null,
     fvg: fvg ? fvg.type : null,
-    midpoint: false,
-    discountZone: false,
-    liquiditySweep: structureState.lastSweep
-      ? structureState.lastSweep.type
-      : null,
-    choch: structureState.lastCHOCH || structureState.lastBOS,
+    zone: "NEUTRAL",
+    fib50: 0
   };
 
-  if (!fvg || !structureState.lastSwingHigh || !structureState.lastSwingLow)
-    return { signalType: null, checklist };
+  if (!structureState.lastSwingHigh || !structureState.lastSwingLow) {
+    return { signalType: null, checklist: evidence };
+  }
 
-  const fib = calculateFibonacci(
-    structureState.lastSwingLow.value,
-    structureState.lastSwingHigh.value,
-  );
+  const fib = calculateFibonacci(structureState.lastSwingLow.value, structureState.lastSwingHigh.value);
+  evidence.fib50 = fib.fib50;
+
+  // Penentuan Zone
+  if (currentPrice < fib.fib50) evidence.zone = "DISCOUNT";
+  else if (currentPrice > fib.fib50) evidence.zone = "PREMIUM";
 
   let signalType: "BUY" | "SELL" | null = null;
-  let entryPrice = currentPrice;
 
-  const fibDiff =
-    structureState.lastSwingHigh.value - structureState.lastSwingLow.value;
-  const fib50Bull = structureState.lastSwingLow.value + fibDiff * 0.5;
-  const fib50Bear = structureState.lastSwingHigh.value - fibDiff * 0.5;
-
-  if (fvg.type === "BULLISH" && currentPrice <= fvg.high + fibDiff * 0.05)
-    checklist.midpoint = true;
-  if (fvg.type === "BEARISH" && currentPrice >= fvg.low - fibDiff * 0.05)
-    checklist.midpoint = true;
-
+  // RULE: BUY hanya di DISCOUNT
   if (
-    structureState.trend === "BULLISH" &&
-    currentPrice <= fib50Bull + fibDiff * 0.1
-  )
-    checklist.discountZone = true;
-  if (
-    structureState.trend === "BEARISH" &&
-    currentPrice >= fib50Bear - fibDiff * 0.1
-  )
-    checklist.discountZone = true;
-
-  // For scalping, if we have Bias + FVG + Inside FVG/Discount + Liquidity Sweep it is a valid setup.
-  if (
-    checklist.bias === "BULLISH" &&
-    checklist.fvg === "BULLISH" &&
-    checklist.liquiditySweep === "BULLISH_SWEEP" &&
-    (checklist.midpoint || checklist.discountZone)
+    evidence.bias === "BULLISH" && 
+    evidence.fvg === "BULLISH" && 
+    evidence.lastSweep === "BULLISH_SWEEP" &&
+    evidence.zone === "DISCOUNT"
   ) {
     signalType = "BUY";
   }
 
+  // RULE: SELL hanya di PREMIUM
   if (
-    checklist.bias === "BEARISH" &&
-    checklist.fvg === "BEARISH" &&
-    checklist.liquiditySweep === "BEARISH_SWEEP" &&
-    (checklist.midpoint || checklist.discountZone)
+    evidence.bias === "BEARISH" && 
+    evidence.fvg === "BEARISH" && 
+    evidence.lastSweep === "BEARISH_SWEEP" &&
+    evidence.zone === "PREMIUM"
   ) {
     signalType = "SELL";
   }
 
   return {
-    signalType: signalType
-      ? { type: signalType, price: entryPrice, fvg, structureState, fib }
-      : null,
-    checklist,
+    signalType: signalType ? { 
+      type: signalType, 
+      price: currentPrice, 
+      fvg, 
+      evidence,
+      riskLevel: "CONSERVATIVE" 
+    } : null,
+    checklist: evidence,
   };
 }
