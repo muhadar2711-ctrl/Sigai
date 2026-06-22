@@ -1,3 +1,4 @@
+tsx
 import React, { useEffect, useState } from "react";
 import {
   Activity,
@@ -6,9 +7,29 @@ import {
   ActivitySquare,
   BrainCircuit,
   ShieldCheck,
+  Target,
+  ChevronRight,
+  Database,
 } from "lucide-react";
 import { Badge, Card, cn } from "./ui";
 import { apiFetch } from "../lib/api";
+
+const getStepColor = (status: string) => {
+  switch (status?.toUpperCase()) {
+    case "VALIDATED":
+    case "APPROVED":
+      return "text-brand-success border-brand-success/30 bg-brand-success/10";
+    case "ACTIVE":
+      return "text-brand-info border-brand-info/30 bg-brand-info/10 animate-pulse";
+    case "REJECTED":
+      return "text-brand-danger border-brand-danger/30 bg-brand-danger/10";
+    case "EXPIRED":
+      return "text-brand-warning border-brand-warning/30 bg-brand-warning/10";
+    case "AWAITING":
+    default:
+      return "text-brand-text-sec border-brand-border/40 bg-black/20 opacity-50";
+  }
+};
 
 export function Dashboard() {
   const [status, setStatus] = useState<any>(null);
@@ -26,112 +47,46 @@ export function Dashboard() {
   }, []);
 
   const latest = status?.signalsHistory?.[0];
+  const strategies = status?.strategies ? Object.entries(status.strategies) : [];
 
   return (
     <div className="flex flex-col gap-5 flex-1 w-full animate-in fade-in duration-300">
       <div className="flex flex-wrap gap-2 items-center bg-brand-bg-sec/50 p-2.5 rounded-xl border border-brand-border shadow-sm">
         <Badge
-          variant={
-            status?.autotrade?.tradeMode === "AUTO" ? "success" : "warning"
-          }
+          variant={status?.autotrade?.tradeMode === "AUTO" ? "success" : "warning"}
           className="font-mono text-[9px] px-1.5 py-0.5 rounded-md uppercase"
         >
           {status?.autotrade?.tradeMode || "MANUAL"} MODE
         </Badge>
         <Badge
-          variant={
-            status?.autotrade?.executionProvider === "NONE"
-              ? "warning"
-              : "success"
-          }
+          variant={status?.autotrade?.executionProvider === "NONE" ? "warning" : "success"}
           className="font-mono text-[9px] px-1.5 py-0.5 rounded-md uppercase"
         >
           EXEC: {status?.autotrade?.executionProvider || "NONE"}
         </Badge>
         <Badge
-          variant={
-            status?.connections?.metaapi === "ONLINE" ? "success" : "default"
-          }
+          variant={status?.robotStatus === "ON" ? "success" : "danger"}
           className="font-mono text-[9px] px-1.5 py-0.5 rounded-md uppercase"
         >
-          EXEC: {status?.connections?.metaapi === "ONLINE" ? "METAAPI_ON" : "STANDBY"}
+          SYS: {status?.robotStatus || "OFF"}
         </Badge>
-        {status?.robotStatus === "ON" &&
-          status?.autotrade?.tradeMode === "AUTO" && (
-            <Badge
-              variant="accent"
-              className="font-mono text-[9px] animate-pulse px-1.5 py-0.5 rounded-md uppercase"
-            >
-              EXEC_ARMED
-            </Badge>
-          )}
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <Card
-          className={cn(
-            "h-20 flex flex-col justify-between p-3.5 shadow-sm transition-all duration-300",
-            status?.engineMode === "NEWS"
-              ? "border-brand-warning/40 bg-brand-warning/5"
-              : "border-brand-success/20 hover:border-brand-success/40"
-          )}
-        >
+        <Card className={cn("h-20 flex flex-col justify-between p-3.5 shadow-sm transition-all", status?.engineMode === "NEWS" ? "border-brand-warning/40 bg-brand-warning/5" : "border-brand-success/20 hover:border-brand-success/40")}>
           <div className="flex justify-between items-center text-brand-text-sec">
-            <div className="text-[9px] font-bold uppercase tracking-widest flex items-center gap-1.5 opacity-90">
-              Risk Mode
-            </div>
-            <ActivitySquare className="w-3.5 h-3.5 opacity-70 text-brand-accent object-contain" />
+            <div className="text-[9px] font-bold uppercase tracking-widest flex items-center gap-1.5 opacity-90">Risk Mode</div>
+            <ActivitySquare className="w-3.5 h-3.5 opacity-70 text-brand-accent" />
           </div>
-          <div
-            className={cn(
-              "text-sm font-bold font-mono truncate tracking-wide",
-              status?.engineMode === "NEWS"
-                ? "text-brand-warning"
-                : "text-brand-success"
-            )}
-          >
+          <div className={cn("text-sm font-bold font-mono truncate tracking-wide", status?.engineMode === "NEWS" ? "text-brand-warning" : "text-brand-success")}>
             {status?.engineMode || "STANDARD"}
-          </div>
-        </Card>
-
-        <Card
-          className={cn(
-            "h-20 flex flex-col justify-between p-3.5 shadow-sm transition-all duration-500",
-            status?.robotStatus === "ON"
-              ? "border-brand-success/50 bg-brand-success/5 animate-pulse"
-              : "border-brand-border/60 hover:border-brand-accent/30"
-          )}
-        >
-          <div className="flex justify-between items-center text-brand-text-sec">
-            <div className="text-[9px] font-bold uppercase tracking-widest flex items-center gap-1.5 opacity-90">
-              Engine State
-            </div>
-            {status?.robotStatus === "ON" ? (
-              <Zap className="w-3.5 h-3.5 text-brand-success drop-shadow-[0_0_8px_rgba(0,255,148,0.8)]" />
-            ) : (
-              <AlertTriangle className="w-3.5 h-3.5 text-brand-danger" />
-            )}
-          </div>
-          <div
-            className={cn(
-              "text-sm font-bold font-mono truncate tracking-wide",
-              status?.robotStatus === "ON"
-                ? "text-brand-success"
-                : status?.robotStatus === "PAUSE"
-                  ? "text-brand-warning"
-                  : "text-brand-danger"
-            )}
-          >
-            {status?.robotStatus || "OFF"}
           </div>
         </Card>
 
         <Card className="h-20 flex flex-col justify-between p-3.5 border-brand-border/60 shadow-sm transition-all hover:border-brand-accent/40 group">
           <div className="flex justify-between items-center text-brand-text-sec">
-            <div className="text-[9px] font-bold uppercase tracking-widest flex items-center gap-1.5 group-hover:text-brand-text transition-colors opacity-90">
-              XAUUSD Live
-            </div>
-            <Activity className="w-3.5 h-3.5 text-brand-accent opacity-70 group-hover:opacity-100 transition-opacity" />
+            <div className="text-[9px] font-bold uppercase tracking-widest flex items-center gap-1.5 opacity-90">XAUUSD Live</div>
+            <Activity className="w-3.5 h-3.5 text-brand-accent opacity-70" />
           </div>
           <div className="text-brand-text text-sm font-bold font-mono truncate tracking-wide">
             {status?.prices?.XAUUSD ? status.prices.XAUUSD.toFixed(2) : "0.00"}
@@ -140,39 +95,61 @@ export function Dashboard() {
 
         <Card className="h-20 flex flex-col justify-between p-3.5 border-brand-border/60 shadow-sm transition-all hover:border-brand-info/40 group">
           <div className="flex justify-between items-center text-brand-text-sec">
-            <div className="text-[9px] font-bold uppercase tracking-widest flex items-center gap-1.5 group-hover:text-brand-text transition-colors opacity-90">
-              EURUSD Live
-            </div>
-            <Activity className="w-3.5 h-3.5 text-brand-info opacity-70 group-hover:opacity-100 transition-opacity" />
+            <div className="text-[9px] font-bold uppercase tracking-widest flex items-center gap-1.5 opacity-90">EURUSD Live</div>
+            <Activity className="w-3.5 h-3.5 text-brand-info opacity-70" />
           </div>
           <div className="text-brand-text text-sm font-bold font-mono truncate tracking-wide">
             {status?.prices?.EURUSD ? status.prices.EURUSD.toFixed(5) : "0.00000"}
           </div>
-        </Card>
+        </div>
+      </div>
+
+      {/* Market Intelligence Section */}
+      <div className="mt-2 flex flex-col gap-3">
+        <h3 className="text-sm font-bold text-brand-text flex items-center gap-2 uppercase tracking-widest">
+          <Target className="w-4 h-4 text-brand-accent" /> Market Intelligence Matrix
+        </h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {strategies.length > 0 ? (
+            strategies.map(([id, strat]: [string, any]) => (
+              <Card key={id} className="p-4 bg-brand-bg-sec/40 border-brand-border/60">
+                <div className="flex justify-between items-center mb-4">
+                  <div className="text-[10px] font-bold text-brand-accent uppercase tracking-tighter">{strat.name}</div>
+                  <Badge className="text-[8px] font-mono py-0">{strat.status}</Badge>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {strat.setupState && Object.entries(strat.setupState).map(([stepKey, stepStatus]: [string, any], idx) => (
+                    <React.Fragment key={stepKey}>
+                      <div className={cn("text-[9px] px-2 py-1 rounded border font-mono font-bold transition-all duration-500", getStepColor(stepStatus))}>
+                        {stepKey.replace(/step\d+_/, "").replace(/_/g, " ")}
+                      </div>
+                      {idx < Object.entries(strat.setupState).length - 1 && (
+                        <ChevronRight className="w-3 h-3 text-brand-border opacity-50" />
+                      )}
+                    </React.Fragment>
+                  ))}
+                </div>
+              </Card>
+            ))
+          ) : (
+            <div className="col-span-full p-6 text-center text-[10px] font-mono text-brand-text-sec border border-dashed border-brand-border rounded-lg">
+              SYNCING STRATEGY ENGINE...
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="mt-2 flex flex-col gap-3">
         <h3 className="text-sm font-semibold text-brand-text flex items-center gap-2">
-          <Activity className="w-4 h-4 text-brand-info" /> Latest Signal
-          Execution
+          <Activity className="w-4 h-4 text-brand-info" /> Latest Execution Trace
         </h3>
 
         {latest ? (
-          <Card
-            className={cn(
-              "p-4 border shadow-sm transition-colors duration-300",
-              latest.type === "BUY"
-                ? "border-brand-success/30 bg-brand-success/5"
-                : "border-brand-danger/30 bg-brand-danger/5",
-            )}
-          >
+          <Card className={cn("p-4 border shadow-sm transition-colors duration-300", latest.type === "BUY" ? "border-brand-success/30 bg-brand-success/5" : "border-brand-danger/30 bg-brand-danger/5")}>
             <div className="flex justify-between items-start mb-3 w-full">
               <div className="flex flex-col gap-1">
                 <div className="flex items-center gap-2.5">
-                  <Badge
-                    variant={latest.type === "BUY" ? "success" : "danger"}
-                    className="font-bold text-[10px] px-2 py-0.5 rounded"
-                  >
+                  <Badge variant={latest.type === "BUY" ? "success" : "danger"} className="font-bold text-[10px] px-2 py-0.5 rounded">
                     {latest.type}
                   </Badge>
                   <span className="text-base font-bold font-mono text-brand-text flex items-center gap-2">
@@ -186,124 +163,57 @@ export function Dashboard() {
                   </span>
                 </div>
                 <div className="text-[10px] md:text-xs text-brand-text-sec font-medium flex items-center gap-1.5 mt-0.5">
-                  <BrainCircuit className="w-3.5 h-3.5 text-brand-accent" /> AI
-                  Verified &bull;{" "}
-                  {new Date(latest.timestamp).toLocaleTimeString("id-ID", {
-                    timeZone: "Asia/Makassar",
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}{" "}
-                  WITA
+                  <BrainCircuit className="w-3.5 h-3.5 text-brand-accent" /> AI Verified &bull; {new Date(latest.timestamp).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })} WITA
                 </div>
               </div>
 
               <div className="flex flex-col items-end gap-1">
-                <Badge
-                  variant={
-                    latest.ai_verdict === "APPROVED" ? "accent" : "warning"
-                  }
-                  className="font-semibold text-[10px] px-2 py-0.5 rounded"
-                >
-                  {latest.ai_verdict === "APPROVED"
-                    ? "VERIFIED"
-                    : latest.ai_verdict === "NEED_MORE_CONFIRMATION"
-                      ? "AWAITING"
-                      : "REJECTED"}
+                <Badge variant={latest.ai_verdict === "APPROVED" ? "accent" : "warning"} className="font-semibold text-[10px] px-2 py-0.5 rounded">
+                  {latest.ai_verdict}
                 </Badge>
-                {latest.currentPips !== undefined &&
-                  [
-                    "ACTIVE",
-                    "TP1_HIT",
-                    "BREAKEVEN",
-                    "TP2_HIT",
-                    "PENDING",
-                  ].includes(latest.status) && (
-                    <div
-                      className={cn(
-                        "text-sm font-mono font-bold",
-                        latest.currentPips > 0
-                          ? "text-brand-success"
-                          : "text-brand-danger",
-                      )}
-                    >
-                      {latest.currentPips > 0 ? "+" : ""}
-                      {latest.currentPips.toFixed(1)} pips
-                    </div>
-                  )}
+                {latest.currentPips !== undefined && (
+                  <div className={cn("text-sm font-mono font-bold", latest.currentPips > 0 ? "text-brand-success" : "text-brand-danger")}>
+                    {latest.currentPips > 0 ? "+" : ""}{latest.currentPips.toFixed(1)} pips
+                  </div>
+                )}
               </div>
             </div>
 
             <div className="grid grid-cols-4 gap-[1px] mt-2 bg-brand-border/40 rounded overflow-hidden">
               <div className="flex flex-col bg-brand-bg-sec/80 p-2 text-center">
-                <span className="text-[9px] md:text-[10px] text-brand-text-sec font-semibold uppercase tracking-wider mb-1">
-                  Entry
-                </span>
-                <span className="text-xs md:text-sm font-mono font-semibold text-brand-text">
-                  {latest.entry?.toFixed(2)}
-                </span>
+                <span className="text-[9px] text-brand-text-sec font-semibold uppercase mb-1">Entry</span>
+                <span className="text-xs font-mono text-brand-text">{latest.entry?.toFixed(2)}</span>
               </div>
               <div className="flex flex-col bg-brand-bg-sec/80 p-2 text-center">
-                <span className="text-[9px] md:text-[10px] text-brand-text-sec font-semibold uppercase tracking-wider mb-1">
-                  SL
-                </span>
-                <span className="text-xs md:text-sm font-mono font-semibold text-brand-danger">
-                  {latest.sl?.toFixed(2)}
-                </span>
+                <span className="text-[9px] text-brand-text-sec font-semibold uppercase mb-1">SL</span>
+                <span className="text-xs font-mono text-brand-danger">{latest.sl?.toFixed(2)}</span>
               </div>
               <div className="flex flex-col bg-brand-bg-sec/80 p-2 text-center">
-                <span className="text-[9px] md:text-[10px] text-brand-text-sec font-semibold uppercase tracking-wider mb-1">
-                  TP
-                </span>
-                <span className="text-xs md:text-sm font-mono font-semibold text-brand-success">
-                  {latest.tp2?.toFixed(2) || latest.tp1?.toFixed(2)}
-                </span>
+                <span className="text-[9px] text-brand-text-sec font-semibold uppercase mb-1">TP</span>
+                <span className="text-xs font-mono text-brand-success">{latest.tp1?.toFixed(2)}</span>
               </div>
               <div className="flex flex-col bg-brand-bg-sec/80 p-2 text-center">
-                <span className="text-[9px] md:text-[10px] text-brand-text-sec font-semibold uppercase tracking-wider mb-1">
-                  RR
-                </span>
-                <span className="text-xs md:text-sm font-mono font-semibold text-brand-info">
-                  1:{latest.rrRatio ? latest.rrRatio.toFixed(1) : "-"}
-                </span>
+                <span className="text-[9px] text-brand-text-sec font-semibold uppercase mb-1">RR</span>
+                <span className="text-xs font-mono text-brand-info">1:{latest.rrRatio?.toFixed(1) || "-"}</span>
               </div>
             </div>
 
-            <div className="flex justify-between items-center mt-3 pt-3 border-t border-brand-border/30 w-full">
-              <div className="text-[10px] md:text-xs text-brand-text-sec">
-                <span className="font-semibold uppercase mr-2 tracking-wider">
-                  State:
-                </span>
-                <span
-                  className={cn(
-                    "font-bold",
-                    latest.status === "SL_HIT"
-                      ? "text-brand-danger"
-                      : latest.status === "CLOSED"
-                        ? "text-brand-success"
-                        : "text-brand-text",
-                  )}
-                >
-                  {latest.status?.replace("_", " ")}
-                </span>
+            <div className="flex justify-between items-center mt-4 pt-3 border-t border-brand-border/30 w-full">
+              <div className="text-[9px] font-mono text-brand-text-sec flex items-center gap-1.5 truncate">
+                <Database className="w-3 h-3" />
+                IDEMPOTENCY_KEY: {latest.id || "UNKNOWN_ID"}
               </div>
-              <div className="text-[10px] md:text-xs uppercase font-bold text-brand-text-sec bg-brand-bg px-2.5 py-1 rounded-md border border-brand-border shadow-sm">
-                AI Score:{" "}
-                <span className="text-brand-success ml-1">
-                  {latest.confidence}%
-                </span>
+              <div className="text-[10px] uppercase font-bold text-brand-text-sec bg-brand-bg px-2.5 py-1 rounded border border-brand-border">
+                AI CONFIDENCE: <span className="text-brand-success ml-1">{latest.confidence}%</span>
               </div>
             </div>
           </Card>
         ) : (
-          <Card className="min-h-[100px] flex items-center justify-center p-4 bg-brand-bg-sec/30 border-dashed border-brand-border mt-1 transition-all">
+          <Card className="min-h-[100px] flex items-center justify-center p-4 bg-brand-bg-sec/30 border-dashed border-brand-border mt-1">
             <div className="flex flex-col items-center text-brand-text-sec">
-              <ShieldCheck className="w-5 h-5 mb-2 opacity-50 text-brand-accent transition-all duration-1000 animate-pulse" />
-              <div className="text-[10px] font-bold uppercase tracking-[0.2em] mb-1">
-                Grid is Clear
-              </div>
-              <div className="text-[9px] font-mono opacity-60">
-                Awaiting matrix computations...
-              </div>
+              <ShieldCheck className="w-5 h-5 mb-2 opacity-50 text-brand-accent animate-pulse" />
+              <div className="text-[10px] font-bold uppercase tracking-[0.2em] mb-1">Execution Pipeline Idle</div>
+              <div className="text-[9px] font-mono opacity-60">Scanning for high-probability setups...</div>
             </div>
           </Card>
         )}
