@@ -1,58 +1,90 @@
-export async function apiFetch(endpoint: string, options?: RequestInit) {
-  try {
-    const customKey = localStorage.getItem("custom_grok_key");
-    const adminSecret = localStorage.getItem("admin_secret") || "";
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      "x-admin-token": adminSecret,
-    };
-    if (customKey) {
-      headers["x-grok-key"] = customKey;
-    }
+import { TradeSignal } from '../../server/services/ai_adapter';
 
-    const res = await fetch(`/api${endpoint}`, {
-      ...options,
-      headers: { ...headers, ...options?.headers },
-    });
+export const sendChatMessage = async (
+  message: string,
+  history: any[],
+  image: string | null,
+  temperature: number,
+  model: string,
+  provider: string
+) => {
+  const response = await fetch('/api/ai/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      message,
+      history,
+      image,
+      temperature,
+      model,
+      provider,
+    }),
+  });
 
-    // Log auth failures
-    if (res.status === 401) {
-      console.warn(`[Auth API] 401 Unauthorized on ${endpoint} — check ADMIN_SECRET`);
-    }
-    if (res.status === 403) {
-      console.warn(`[Auth API] 403 Forbidden on ${endpoint} — invalid token`);
-    }
-    if (res.status === 404) {
-      console.warn(`[API] 404 Not Found on ${endpoint} — check backend M route prefix`);
-    }
-    if (res.status === 429) {
-      console.warn(`[API] 429 Rate Limited on ${endpoint}`);
-    }
-    if (res.status >= 500) {
-      console.error(`[API] Server Error ${res.status} on ${endpoint}`);
-    }
-
-    // Handle empty responses
-    const text = await res.text();
-    if (!text) {
-      return { success: false, message: "Empty response from server", status: res.status };
-    }
-
-    try {
-      const data = JSON.parse(text);
-      return data;
-    } catch (parseErr) {
-      console.error(`[API] Invalid JSON response from ${endpoint}:`, text.substring(0, 200));
-      return { success: false, message: "Invalid JSON response from server", raw: text.substring(0, 500) };
-    }
-  } catch (err: any) {
-    console.error(`[API] Fetch Error for ${endpoint}:`, err.message);
-    // Return error info instead of generic fallback
-    return {
-      success: false,
-      message: err.message || "Network Error",
-      error: err,
-      data: null,
-    };
+  if (!response.ok) {
+    const errorBody = await response.text();
+    console.error('Failed to send chat message:', response.status, errorBody);
+    throw new Error(
+      `Network response was not ok. Status: ${response.status}. Body: ${errorBody}`
+    );
   }
-}
+
+  return response.json();
+};
+
+export const getBalance = async () => {
+  const response = await fetch('/api/v1/mt5/balance', {
+    headers: {
+      'Content-Type': 'application/json',
+      'admin-secret': process.env.NEXT_PUBLIC_ADMIN_SECRET || '',
+    },
+  });
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error('Failed to fetch balance:', errorText);
+    throw new Error('Failed to fetch balance');
+  }
+  return response.json();
+};
+
+export const getPositions = async () => {
+  const response = await fetch('/api/v1/mt5/positions', {
+    headers: {
+      'Content-Type': 'application/json',
+      'admin-secret': process.env.NEXT_PUBLIC_ADMIN_SECRET || '',
+    },
+  });
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error('Failed to fetch positions:', errorText);
+    throw new Error('Failed to fetch positions');
+  }
+  return response.json();
+};
+
+export const executeTrade = async (signal: TradeSignal) => {
+  const response = await fetch('/api/v1/mt5/webhook', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'admin-secret': process.env.NEXT_PUBLIC_ADMIN_SECRET || '',
+    },
+    body: JSON.stringify(signal),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    console.error('Failed to execute trade:', response.status, errorBody);
+    throw new Error(`Failed to execute trade. Status: ${response.status}`);
+  }
+
+  return response.json();
+};
+
+export const getMcpStatus = async () => {
+  const response = await fetch('/api/mcp/status');
+  if (!response.ok) {
+    throw new Error('Failed to fetch MCP status');
+  }
+  return response.json();
+};

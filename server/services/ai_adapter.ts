@@ -1,899 +1,164 @@
-import OpenAI from "openai";
-import axios from "axios";
-import dotenv from "dotenv";
-import pino from "pino";
-import fs from "fs";
-import path from "path";
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenerativeAI, Content, Part, Tool } from '@google/generative-ai';
+import { promises as fs } from 'fs';
+import path from 'path';
 
-dotenv.config();
+// Interfaces
+export interface TradeSignal {
+  action: 'BUY' | 'SELL';
+  symbol: string;
+  stopLoss: number;
+  takeProfit: number;
+  risk: number; 
+}
 
-const logger = pino({
-  transport: {
-    target: "pino-pretty",
-    options: {
-      colorize: true,
+export interface AIProvider {
+  generateContent(history: any[], newMessage: string, image: string | null, temperature: number, model: string): Promise<any>;
+}
+
+// --- Tool Definitions ---
+const tradeSignalTool: Tool = {
+  functionDeclarations: [
+    {
+      name: 'execute_trade_signal',
+      description: 'Executes a trade signal for BUY or SELL actions.',
+      parameters: {
+        type: 'OBJECT',
+        properties: {
+          action: { type: 'STRING', description: "The trade action, either 'BUY' or 'SELL'." },
+          symbol: { type: 'STRING', description: "The financial instrument symbol, e.g., 'XAUUSD'." },
+          stopLoss: { type: 'NUMBER', description: 'The price at which to close the position at a loss.' },
+          takeProfit: { type: 'NUMBER', description: 'The price at which to close the position at a profit.' },
+          risk: { type: 'NUMBER', description: 'The percentage of account balance to risk.' },
+        },
+        required: ['action', 'symbol', 'stopLoss', 'takeProfit', 'risk'],
+      },
     },
-  },
-});
+  ],
+};
 
-// Setup Log to file
-function logAI(
-  provider: string,
-  model: string,
-  tokens: number,
-  latency: number,
-  error?: string,
-) {
-  try {
-    const logDir = path.join(process.cwd(), "logs");
-    if (!fs.existsSync(logDir)) {
-      fs.mkdirSync(logDir, { recursive: true });
+// --- Gemini Provider ---
+
+const transformToGoogleMessages = (history: any[], newMessage: string, image: string | null): Content[] => {
+  const googleHistory: Content[] = history.map((msg) => {
+    const role = msg.role === 'user' ? 'user' : 'model';
+    
+    // Handle cases where content is a simple string or a structured object
+    if (typeof msg.content === 'string') {
+      return { role, parts: [{ text: msg.content }] };
+    } else if (Array.isArray(msg.content)) { // OpenAI-style content array
+      const parts: Part[] = msg.content.map((item: any) => {
+        if (item.type === 'text') {
+          return { text: item.text };
+        }
+        if (item.type === 'image_url' && item.image_url?.url) {
+            const [header, data] = item.image_url.url.split(',');
+            const mimeType = header.match(/:(.*?);/)?.[1] || 'image/jpeg';
+            return {
+                inlineData: {
+                    mimeType,
+                    data,
+                },
+            };
+        }
+        return { text: '' }; // Should not happen with valid inputs
+      }).filter(part => part.text !== '');
+      return { role, parts };
     }
-    const logFile = path.join(logDir, "ai.log");
-    const entry = {
-      timestamp: new Date().toISOString(),
-      provider,
-      model,
-      tokens: tokens || 0,
-      latency,
-      error,
-    };
-    fs.appendFileSync(logFile, JSON.stringify(entry) + "\n", "utf-8");
-  } catch (err) {
-    // Ignore logging errors
-  }
-}
-
-// Configuration & State
-const PROVIDER_CONFIG = {
-  timeout: 15000,
-  maxFailures: 3,
-  circuitOpenDuration: 5 * 60 * 1000, // 5 mins
-};
-
-const circuitOpenUntil: Record<string, number> = {
-  openrouter: 0,
-  openai: 0,
-  free: 0,
-  xai: 0,
-  groq: 0,
-  perplexity: 0,
-  gemini: 0,
-};
-
-const failures: Record<string, number> = {
-  openrouter: 0,
-  openai: 0,
-  free: 0,
-  xai: 0,
-  groq: 0,
-  perplexity: 0,
-  gemini: 0,
-};
-
-// Error Helpers
-export function isQuotaError(err: any): boolean {
-  const msg = (err.message || "").toLowerCase();
-  const resMsg = (err.response?.data?.error?.message || "").toLowerCase();
-  return (
-    msg.includes("429") ||
-    resMsg.includes("429") ||
-    msg.includes("quota") ||
-    resMsg.includes("quota") ||
-    msg.includes("resource exhausted") ||
-    resMsg.includes("resource exhausted")
-  );
-}
-
-export function isTimeoutError(err: any): boolean {
-  const msg = (err.message || "").toLowerCase();
-  return msg.includes("timeout") || err.code === "ECONNABORTED";
-}
-
-export function isAuthError(err: any): boolean {
-  const msg = (err.message || "").toLowerCase();
-  const resMsg = (err.response?.data?.error?.message || "").toLowerCase();
-  return (
-    msg.includes("401") ||
-    resMsg.includes("401") ||
-    msg.includes("403") ||
-    resMsg.includes("403")
-  );
-}
-
-export function normalizeProviderResponse(content: string, toolCalls: any) {
-  if (toolCalls && toolCalls.length > 0) {
-    return JSON.stringify({ role: "assistant", content: content || "", tool_calls: toolCalls });
-  }
-  return content || "";
-}
-
-export function hideRawToolOutput(text: string): string {
-  if (!text) return "";
-  try {
-    const parsed = JSON.parse(text);
-    if (parsed.tool_calls) {
-      return "*(Sedang mengumpulkan data internal...)*";
-    }
-  } catch (e) {}
-
-  if (
-    text.includes('"tool_calls":') ||
-    text.includes('{"name":') ||
-    text.includes('`{"path":') ||
-    text.includes('{"path":')
-  ) {
-    return "*(Sistem sedang memproses hasil dari repositori atau database...)*";
-  }
-
-  // Hapus meta commentary agresif
-  let cleaned = text.replace(
-    /Saya (telah|akan) (memanggil|menggunakan) tool.*/gi,
-    "",
-  );
-  cleaned = cleaned.replace(
-    /Berdasarkan (data live|data di atas|sistem|guardrail).*/gi,
-    "",
-  );
-  cleaned = cleaned.replace(/Berikut adalah analisa(nya|).*:/gi, "");
-  cleaned = cleaned.replace(
-    /Saya tidak( dapat| bisa) (melihat|menemukan) (chart|gambar) karena.*/gi,
-    "NO TRADE. Data gambar tidak terbaca dengan baik.",
-  );
-  cleaned = cleaned.replace(/dalam konteks implementasi/gi, "");
-  cleaned = cleaned.replace(/karena native react/gi, "");
-  cleaned = cleaned.replace(/whitespace-pre-wrap/gi, "");
-  cleaned = cleaned.replace(/prompt guardrails?/gi, "");
-  cleaned = cleaned.replace(/dependency/gi, "");
-  cleaned = cleaned.replace(/rendering/gi, "");
-  cleaned = cleaned.replace(/tool_calls/gi, "");
-  cleaned = cleaned.replace(/json mentah/gi, "");
-  cleaned = cleaned.replace(/log debug/gi, "");
-
-  return cleaned.trim();
-}
-
-export function markdownCleaner(text: string): string {
-  if (!text) return "";
-  let cleaned = text.replace(/```[a-z]*\s*/gi, "");
-  cleaned = cleaned.replace(/```/g, "");
-
-  // normalize headers
-  cleaned = cleaned.replace(/^#+\s+/gm, "");
-
-  // Pertahankan struktur jika ada bold
-  cleaned = cleaned.replace(/\*\*(.*?)\*\*/g, (match, p1) => {
-    return p1.toUpperCase();
+    return { role, parts: [{ text: '' }] }; // Fallback for unexpected format
   });
 
-  // Clean up bullet points
-  cleaned = cleaned.replace(/^[\*\-]\s+/gm, "• ");
+  // Add the new user message
+  const newParts: Part[] = [{ text: newMessage }];
+  if (image) {
+    const [header, data] = image.split(',');
+    const mimeType = header.match(/:(.*?);/)?.[1] || 'image/jpeg';
+    newParts.push({ inlineData: { mimeType, data } });
+  }
+  googleHistory.push({ role: 'user', parts: newParts });
 
-  return cleaned.trim();
-}
+  return googleHistory;
+};
 
-export function responseFormatter(text: string): string {
-  let cleaned = hideRawToolOutput(text);
-  if (cleaned.startsWith("*(")) return cleaned;
-  return markdownCleaner(cleaned);
-}
 
-export function resolveFallbackChain(
-  preferredProvider?: string,
-  hasImage?: boolean,
-  mode?: string,
-): string[] {
-  let primary = "gemini";
+class GoogleGeminiProvider implements AIProvider {
+  private genAI: GoogleGenerativeAI;
 
-  if (hasImage) {
-    primary = "gemini";
-  } else if (mode === "news_filter" || mode === "market_scan") {
-    primary = "groq";
-  } else if (
-    mode === "setup_validation" ||
-    mode === "strategy_builder" ||
-    mode === "risk_manager" ||
-    mode === "general"
-  ) {
-    primary = "groq";
-  } else if (mode === "code_fix") {
-    primary = "groq";
+  constructor(apiKey: string) {
+    this.genAI = new GoogleGenerativeAI(apiKey);
   }
 
-  if (preferredProvider) {
-    primary = preferredProvider;
-  }
-
-  const allProviders = ["gemini", "groq", "xai", "openrouter", "free"];
-  let chain = [primary, ...allProviders.filter((p) => p !== primary)];
-  return chain;
-}
-
-export function retrieveKnowledgeContext(intents: string[]): string {
-  const knowledgeDir = path.join(process.cwd(), "knowledge");
-  if (!fs.existsSync(knowledgeDir)) return "";
-
-  const keywordsToFiles: Record<string, string> = {
-    SMC: "smc.md",
-    ICT: "ict.md",
-    "Smart Money": "smc.md",
-    "Chart Analyst": "price_action.md",
-    "Market Structure Analyst": "smc.md",
-    "News Analyst": "macro_news.md",
-    "Risk Manager": "risk_management.md",
-    "Strategy Builder": "supply_demand.md",
-  };
-
-  let filesToRead: Set<string> = new Set();
-
-  // default active knowledge
-  filesToRead.add("xauusd_session.md");
-  filesToRead.add("psychology.md");
-
-  for (const intent of intents) {
-    for (const [key, file] of Object.entries(keywordsToFiles)) {
-      if (intent.toLowerCase().includes(key.toLowerCase()) || key === intent) {
-        filesToRead.add(file);
-      }
-    }
-  }
-
-  let contextText = "\\n[KNOWLEDGE BASE TERSINKRONISASI]:\\n";
-
-  for (const file of Array.from(filesToRead)) {
-    const filePath = path.join(knowledgeDir, file);
-    if (fs.existsSync(filePath)) {
-      try {
-        const content = fs.readFileSync(filePath, "utf-8");
-        contextText += content + "\\n\\n";
-      } catch (e) {}
-    }
-  }
-
-  return contextText;
-}
-
-export function extractTradeSummary(finalAnswer: string, mode: string): any {
-  const parseLine = (regex: RegExp) => {
-    const match = finalAnswer.match(regex);
-    return match ? match[1].trim().replace(/\*\*/g, "") : "";
-  };
-
-  const bias = parseLine(/\b(?:Bias Market:?|Bias:?)\s*(?:[\*\s]*)([^\n]+)/i);
-  const setup = parseLine(/\b(?:Setup:?)\s*(?:[\*\s]*)([^\n]+)/i);
-  const action = parseLine(/\b(?:Final Action:?)\s*(?:[\*\s]*)([^\n]+)/i);
-  const confidence = parseLine(
-    /\b(?:Confidence Score:?|Confidence:?)\s*(?:[\*\s]*)([^\n]+)/i,
-  );
-  const structure = parseLine(
-    /\b(?:Struktur Market:?|Market Structure:?)\s*(?:[\*\s]*)([^\n]+)/i,
-  );
-
-  return {
-    timestamp: new Date().toISOString(),
-    mode,
-    bias: bias || "UNKNOWN",
-    setup: setup || "NONE",
-    action: action || "WAIT",
-    confidence: confidence || "0%",
-    structure: structure || "NONE",
-    outcome: "PENDING",
-  };
-}
-
-export function markProviderFailure(provider: string) {
-  if (failures[provider] !== undefined) {
-    failures[provider]++;
-    if (failures[provider] >= PROVIDER_CONFIG.maxFailures) {
-      logger.warn(`[${provider.toUpperCase()}] triggered circuit breaker!`);
-      circuitOpenUntil[provider] =
-        Date.now() + PROVIDER_CONFIG.circuitOpenDuration;
-    }
-  }
-}
-
-export function markProviderSuccess(provider: string) {
-  if (failures[provider] !== undefined) {
-    failures[provider] = 0;
-  }
-}
-
-/**
- * Extract mimeType from data URL or default to image/jpeg
- * Handles: data:image/png;base64,..., data:image/webp;base64,..., data:image/jpeg;base64,...
- */
-function extractMimeType(dataUrl: string): string {
-  if (!dataUrl) return "image/jpeg";
-  const match = dataUrl.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9\-\+\.]+);base64,/);
-  if (match && match[1]) {
-    return match[1];
-  }
-  return "image/jpeg";
-}
-
-/**
- * Normalize base64 image data — strip data URL prefix if present
- * Returns { base64, mimeType }
- */
-function normalizeBase64Image(input: string): { base64: string; mimeType: string } {
-  if (!input) return { base64: "", mimeType: "image/jpeg" };
-  
-  if (input.includes(",")) {
-    const mimeType = extractMimeType(input);
-    const base64 = input.split(",")[1];
-    return { base64, mimeType };
-  }
-  
-  return { base64: input, mimeType: "image/jpeg" };
-}
-
-/**
- * Map OpenAI-style tools to Gemini functionDeclarations format
- */
-function mapToolsToGemini(tools: any[]): any {
-  if (!tools || tools.length === 0) return undefined;
-  const declarations = tools
-    .filter((t) => t.type === "function")
-    .map((t) => {
-      const f = t.function;
-      return {
-        name: f.name,
-        description: f.description || "",
-        parameters: f.parameters || { type: "OBJECT" },
-      };
-    });
-  return [{ functionDeclarations: declarations }];
-}
-
-/**
- * Build Gemini contents array from messages history
- * Gemini uses: { role: "user"|"model", parts: [{ text }, { inlineData? }] }
- * 
- * CRITICAL FIX: 
- * - Images are merged into the LAST user message as inlineData parts
- * - Tool messages (role: "tool") are converted to user messages with functionResponse
- * - Tool call messages (assistant with tool_calls) are converted to model messages with functionCall
- */
-function buildGeminiContents(
-  messages: any[],
-  systemInstruction: string,
-  options?: {
-    hasImage?: boolean;
-    image_base64?: string;
-    images_base64?: string[];
-  },
-): any[] {
-  const contents: any[] = [];
-
-  // Process all messages
-  for (let i = 0; i < messages.length; i++) {
-    const msg = messages[i];
-    const isLastMessage = i === messages.length - 1;
-
-    if (msg.role === "system") continue; // system is handled via config
-
-    const role = msg.role === "assistant" ? "model" : "user";
-    let parts: any[] = [];
-
-    // Handle tool response messages (role: "tool")
-    if (msg.role === "tool" && msg.tool_call_id) {
-      // Gemini uses functionResponse for tool results
-      const responseText = typeof msg.content === "string" 
-        ? msg.content 
-        : JSON.stringify(msg.content);
+  async generateContent(history: any[], newMessage: string, image: string | null, temperature: number, modelName: string): Promise<any> {
+    try {
+      const model = this.genAI.getGenerativeModel({ model: modelName, tools: [tradeSignalTool] });
       
-      // Parse the tool name from the message or use a default
-      const toolName = msg.name || "unknown_tool";
+      const chatHistory = transformToGoogleMessages(history, newMessage, image);
       
-      parts.push({ 
-        functionResponse: {
-          name: toolName,
-          response: { name: toolName, content: responseText }
+      const result = await model.generateContentStream({ 
+        contents: chatHistory,
+        generationConfig: {
+          temperature,
         }
       });
-      
-      contents.push({ role: "user", parts });
-      continue;
-    }
 
-    // Handle assistant messages with tool_calls
-    if (msg.role === "assistant" && msg.tool_calls && msg.tool_calls.length > 0) {
-      for (const tc of msg.tool_calls) {
-        let args = {};
-        try {
-          args = JSON.parse(tc.arguments || "{}");
-        } catch (e) {
-          args = {};
-        }
-        parts.push({
-          functionCall: {
-            name: tc.function?.name || tc.name || "unknown",
-            args: args
+      // For simplicity, we will aggregate the streamed response here.
+      // A production implementation should stream this back to the client.
+      let aggregatedResponse = '';
+      let toolCalls: any[] = [];
+
+      for await (const chunk of result.stream) {
+          if (chunk.functionCalls) {
+              toolCalls.push(...chunk.functionCalls);
           }
-        });
+          const chunkText = chunk.text();
+          if(chunkText) {
+            aggregatedResponse += chunkText;
+          }
       }
       
-      // Also add text content if present
-      if (msg.content && typeof msg.content === "string") {
-        parts.unshift({ text: msg.content });
+      if (toolCalls.length > 0) {
+        return { tool_calls: toolCalls };
       }
-      
-      if (parts.length > 0) {
-        contents.push({ role: "model", parts });
-      }
-      continue;
-    }
 
-    // Handle regular content messages
-    if (typeof msg.content === "string") {
-      parts.push({ text: msg.content });
-    } else if (Array.isArray(msg.content)) {
-      // OpenAI-style content array
-      for (const part of msg.content) {
-        if (part.type === "text") {
-          parts.push({ text: part.text });
-        } else if (part.type === "image_url") {
-          const url = part.image_url?.url || "";
-          const { base64, mimeType } = normalizeBase64Image(url);
-          if (base64) {
-            parts.push({ inlineData: { data: base64, mimeType } });
-          }
-        }
-      }
-    }
+      return { response: aggregatedResponse };
 
-    // Merge images from options into the LAST user message
-    if (isLastMessage && role === "user") {
-      if (options?.images_base64 && options.images_base64.length > 0) {
-        for (const imgBase64 of options.images_base64) {
-          const { base64, mimeType } = normalizeBase64Image(imgBase64);
-          if (base64) {
-            parts.push({
-              inlineData: { data: base64, mimeType },
-            });
-          }
-        }
-      } else if (options?.image_base64) {
-        const { base64, mimeType } = normalizeBase64Image(options.image_base64);
-        if (base64) {
-          parts.push({
-            inlineData: { data: base64, mimeType },
-          });
-        }
+    } catch (error: any) {
+      console.error('Error generating content with Google Gemini:', error);
+      // Check for specific proto-related errors if possible
+      if (error.message.includes('Request payload is invalid')) {
+        throw new Error(`Invalid request payload for Gemini. Check data format. Original Error: ${error.message}`);
       }
-    }
-
-    if (parts.length > 0) {
-      contents.push({ role, parts });
+      throw new Error(`Gemini API Error: ${error.message}`);
     }
   }
-
-  // If no messages have content, add a minimal user message
-  if (contents.length === 0 && systemInstruction) {
-    contents.push({ role: "user", parts: [{ text: "Hello" }] });
-  }
-
-  return contents;
 }
 
-export async function generateContent(
-  prompt: string,
-  customSystemInstruction?: string,
-  messages?: any[],
-  tools?: any[],
-  preferredProvider?: string,
-  options?: {
-    hasImage?: boolean;
-    mode?: string;
-    image_base64?: string;
-    images_base64?: string[];
-  },
-): Promise<string> {
-  const providers = resolveFallbackChain(
-    preferredProvider,
-    options?.hasImage,
-    options?.mode,
-  );
-  let lastError = null;
+// --- AI Adapter ---
 
-  for (const provider of providers) {
-    if (Date.now() < circuitOpenUntil[provider]) {
-      logger.warn(`Circuit breaker open for ${provider}, skipping...`);
-      continue;
-    }
+class AIAdapter {
+  private provider: AIProvider;
 
-    const startTime = Date.now();
-    let modelUsed = "";
-    try {
-      let responseContent = "";
-      let tokens = 0;
-
-      const history = messages ? [...messages] : [];
-      if (
-        prompt &&
-        (!history.length || history[history.length - 1].content !== prompt)
-      ) {
-        history.push({ role: "user", content: prompt });
-      }
-
-      if (
-        provider === "gemini" &&
-        (process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY_2)
-      ) {
-        logger.info(`Attempting Gemini...`);
-        modelUsed = "gemini-2.0-flash";
-        const keys = [
-          process.env.GEMINI_API_KEY,
-          process.env.GEMINI_API_KEY_2,
-        ].filter(Boolean) as string[];
-
-        let geminiSuccess = false;
-        for (const key of keys) {
-          try {
-            const ai = new GoogleGenAI({ apiKey: key });
-
-            // Build full contents array with history + images merged into last message
-            const contents = buildGeminiContents(history, customSystemInstruction || "", options);
-
-            // Map tools to Gemini format
-            let mappedTools: any = undefined;
-            if (tools && tools.length > 0) {
-              mappedTools = mapToolsToGemini(tools);
-            }
-
-            const response = await ai.models.generateContent({
-              model: modelUsed,
-              contents: contents,
-              config: {
-                systemInstruction: customSystemInstruction || undefined,
-                tools: mappedTools,
-              },
-            });
-
-            // Handle function calls from Gemini
-            if (response.functionCalls && response.functionCalls.length > 0) {
-              const tCalls = response.functionCalls.map((fc: any) => ({
-                id: Math.random().toString(36).substring(2, 10),
-                type: "function",
-                function: {
-                  name: fc.name,
-                  arguments: JSON.stringify(fc.args),
-                },
-              }));
-              responseContent = JSON.stringify({ 
-                role: "assistant", 
-                content: response.text || "", 
-                tool_calls: tCalls 
-              });
-            } else {
-              responseContent = response.text || "";
-            }
-            geminiSuccess = true;
-            break;
-          } catch (err: any) {
-            if (isQuotaError(err) || isAuthError(err)) continue;
-            throw err;
-          }
-        }
-        if (!geminiSuccess)
-          throw new Error("Gemini API Quota/Auth failed across all keys");
-      } else if (provider === "groq" && process.env.GROQ_API_KEY) {
-        logger.info(`Attempting Groq...`);
-        modelUsed = "llama-3.3-70b-versatile";
-        const finalMessages = customSystemInstruction
-          ? [{ role: "system", content: customSystemInstruction }, ...history]
-          : history;
-        const res = await axios.post(
-          "https://api.groq.com/openai/v1/chat/completions",
-          {
-            model: modelUsed,
-            messages: finalMessages,
-            tools: tools,
-          },
-          {
-            headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}` },
-            timeout: PROVIDER_CONFIG.timeout,
-          },
-        );
-        responseContent = normalizeProviderResponse(
-          res.data.choices[0]?.message?.content,
-          res.data.choices[0]?.message?.tool_calls,
-        );
-        tokens = res.data.usage?.total_tokens || 0;
-      } else if (provider === "xai" && process.env.XAI_API_KEY) {
-        logger.info(`Attempting xAI (Grok)...`);
-        modelUsed = "grok-3-mini";
-        const finalMessages = customSystemInstruction
-          ? [{ role: "system", content: customSystemInstruction }, ...history]
-          : history;
-        const res = await axios.post(
-          "https://api.x.ai/v1/chat/completions",
-          {
-            model: modelUsed,
-            messages: finalMessages,
-            tools: tools,
-          },
-          {
-            headers: { Authorization: `Bearer ${process.env.XAI_API_KEY}` },
-            timeout: PROVIDER_CONFIG.timeout,
-          },
-        );
-        responseContent = normalizeProviderResponse(
-          res.data.choices[0]?.message?.content,
-          res.data.choices[0]?.message?.tool_calls,
-        );
-        tokens = res.data.usage?.total_tokens || 0;
-      } else if (provider === "openrouter" && process.env.OPENROUTER_API_KEY) {
-        logger.info(`Attempting OpenRouter...`);
-        modelUsed =
-          process.env.OPENROUTER_MODEL_DEFAULT ||
-          "google/gemini-2.5-flash-lite";
-
-        const lastMsg =
-          history.length > 0 ? history[history.length - 1].content : prompt;
-        const openRouterMessages = history.map((m) => {
-          if (m.role === "user" && m.content === lastMsg) {
-            let contentArr: any[] = [
-              { type: "text", text: m.content || "Halo" },
-            ];
-
-            if (options?.images_base64 && options.images_base64.length > 0) {
-              for (const img of options.images_base64) {
-                const { base64, mimeType } = normalizeBase64Image(img);
-                contentArr.push({
-                  type: "image_url",
-                  image_url: {
-                    url: `data:${mimeType};base64,${base64}`,
-                  },
-                });
-              }
-            } else if (options?.image_base64) {
-              const { base64, mimeType } = normalizeBase64Image(options.image_base64);
-              contentArr.push({
-                type: "image_url",
-                image_url: {
-                  url: `data:${mimeType};base64,${base64}`,
-                },
-              });
-            }
-
-            return {
-              role: m.role,
-              content: contentArr.length > 1 ? contentArr : m.content,
-            };
-          }
-          return { role: m.role, content: m.content || "" };
-        });
-
-        const finalMessages = customSystemInstruction
-          ? [
-              { role: "system", content: customSystemInstruction },
-              ...openRouterMessages,
-            ]
-          : openRouterMessages;
-        const res = await axios.post(
-          "https://openrouter.ai/api/v1/chat/completions",
-          {
-            model: modelUsed,
-            messages: finalMessages,
-            tools: tools,
-          },
-          {
-            headers: {
-              Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-              "HTTP-Referer": process.env.APP_URL || "http://localhost:3000",
-            },
-            timeout: PROVIDER_CONFIG.timeout,
-          },
-        );
-        responseContent = normalizeProviderResponse(
-          res.data.choices[0]?.message?.content,
-          res.data.choices[0]?.message?.tool_calls,
-        );
-        tokens = res.data.usage?.total_tokens || 0;
-      } else if (
-        provider === "free" &&
-        process.env.FREE_AI_API_KEY &&
-        process.env.FREE_AI_BASE_URL
-      ) {
-        logger.info(`Attempting Free AI Fallback...`);
-        modelUsed = process.env.FREE_AI_MODEL || "gpt-3.5-turbo";
-        const finalMessages = customSystemInstruction
-          ? [{ role: "system", content: customSystemInstruction }, ...history]
-          : history;
-        const client = new OpenAI({
-          apiKey: process.env.FREE_AI_API_KEY,
-          baseURL: process.env.FREE_AI_BASE_URL,
-        });
-        const response = await client.chat.completions.create(
-          {
-            model: modelUsed,
-            messages: finalMessages,
-            tools: tools,
-          },
-          { timeout: PROVIDER_CONFIG.timeout, maxRetries: 1 },
-        );
-        responseContent = normalizeProviderResponse(
-          response.choices[0]?.message?.content || "",
-          response.choices[0]?.message?.tool_calls,
-        );
-        tokens = response.usage?.total_tokens || 0;
-      } else {
-        continue;
-      }
-
-      markProviderSuccess(provider);
-      const latency = Date.now() - startTime;
-      logAI(provider, modelUsed, tokens, latency);
-      return responseContent;
-    } catch (err: any) {
-      const errMsg = err.response?.data?.error?.message || err.message;
-      logger.error(`[${provider.toUpperCase()}] Failed: ${errMsg}`);
-      lastError = err;
-
-      markProviderFailure(provider);
-      const latency = Date.now() - startTime;
-      logAI(provider, modelUsed || "unknown", 0, latency, errMsg);
-
-      if (isQuotaError(err) || isTimeoutError(err)) {
-        continue; // Try next fallback gracefully
-      }
-    }
+  constructor(provider: AIProvider) {
+    this.provider = provider;
   }
 
-  return JSON.stringify({
-    error_fallback: true,
-    message: `All multi-provider AI routes failed. Last error: ${lastError?.message || "Unknown"}`,
-  });
-}
-
-export async function chatCompletionFull(
-  messages: any[],
-  systemInstruction?: string,
-  tools?: any[],
-  preferredProvider?: string,
-  options?: {
-    hasImage?: boolean;
-    mode?: string;
-    image_base64?: string;
-    images_base64?: string[];
-  },
-): Promise<any> {
-  const rawRes = await generateContent(
-    "",
-    systemInstruction,
-    messages,
-    tools,
-    preferredProvider,
-    options,
-  );
-  try {
-    const parsed = JSON.parse(rawRes);
-    if (parsed && parsed.role === "assistant") {
-      // This is a tool_calls response from Gemini
-      if (parsed.tool_calls) {
-        return { choices: [{ message: { role: "assistant", content: parsed.content || "", tool_calls: parsed.tool_calls } }] };
-      }
-      // Plain text response wrapped as assistant message
-      return { choices: [{ message: { content: parsed.content || rawRes } }] };
-    }
-    if (parsed && parsed.error_fallback) {
-      throw new Error("Provider exhausted"); // bubble up error logically if expected by old callers
-    }
-  } catch (e) {
-    // Not JSON — it's a plain text response, return as-is
+  async generateContent(history: any[], newMessage: string, image: string | null, temperature: number, model: string) {
+    return this.provider.generateContent(history, newMessage, image, temperature, model);
   }
-
-  return { choices: [{ message: { content: rawRes } }] };
 }
 
-export async function validateSignalAdapter(
-  signalData: any,
-  marketContext?: any,
-): Promise<{
-  verdict: "APPROVED" | "REJECTED" | "NEED_MORE_CONFIRMATION";
-  reason: string;
-}> {
-  const signalJson = JSON.stringify(signalData, null, 2);
-  const contextJson = marketContext
-    ? JSON.stringify(marketContext, null, 2)
-    : "Data market terkini tidak tersedia.";
+let defaultProvider: AIProvider;
 
-  // Define true multi-agent tasks
-  const agents = [
-    {
-      name: "Risk & Reward Manager",
-      role: "Evaluasi level risiko, stop loss ratio (apakah SL terlalu lebar), R:R, dan margin safety.",
-    },
-    {
-      name: "Market Structure Analyst",
-      role: "Evaluasi kesesuaian antara tren saat ini pada OHLC dan market sentiment dengan sinyal.",
-    },
-    {
-      name: "SMC Technical Specialist",
-      role: "Validasi apakah setup mematuhi mitigasi FVG, likuiditas, dan struktur sesi.",
-    },
-  ];
-
-  try {
-    const agentPromises = agents.map(async (agent) => {
-      const prompt = `Kamu adalah ${agent.name} dalam komite trading institusional.
-Tugas khususmu: ${agent.role}
-
-Berikut adalah Konteks Pasar Saat Ini (Candle Histories, Sentiment News, Recent Signals):
-${contextJson}
-
-Berikut adalah data setup algoritmik yang akan dieksekusi:
-${signalJson}
-
-Berikan pandangan kritis maksimum 2 paragraf. Secara logis, apakah setup ini mencerminkan probabilitas tinggi (HIGH QUALITY) atau justru memaksakan masuk ke pasar (LOW QUALITY) berdasarkan data price action dan sentimen? Sertakan argumen persetujuan/penolakan menurut bidang keahlianmu.`;
-
-      try {
-        const rawRes = await generateContent(prompt, "", [], [], "gemini", {
-          mode: "setup_validation",
-        });
-        return `--- [${agent.name}] ---\n${rawRes.trim()}`;
-      } catch (err: any) {
-        return `--- [${agent.name}] ---\nError: Gagal memproses data.`;
-      }
-    });
-
-    const agentResults = await Promise.all(agentPromises);
-    const combinedInsights = agentResults.join("\n\n");
-
-    const criticPrompt = `Kamu adalah Chief Trade Validator AI.
-ATURAN WAJIB (STRICT RULES) The Matrix:
-1. Killzone / Waktu: Setup WAJIB memiliki status "activeKillzone" (mis. LONDON, NEW YORK). Jika "OUTSIDE_KILLZONE", WAJIB REJECTED.
-2. Liquidity Sweep: Jika tidak ada bukti Sapu Likuiditas (Liquidity Sweep) atau "NO_LIQUIDITY_SWEEP", kurangi signifikansinya.
-3. R:R (Risk to Reward): Jika data rrRatio di bawah 1.5, WAJIB REJECTED.
-
-Berikut evaluasi mendalam dari tim pakarmu atas sinyal trading ini, dilengkapi dengan kondisi market terkini:
-${combinedInsights}
-
-Tugasmu merangkum konsensus tersebut ke dalam satu keputusan akhir.
-Tentukan apakah Sinyal ini HIGH QUALITY (probabilitas unggul) atau LOW QUALITY (berisiko tinggi/manipulasi pasar).
-Jika HIGH QUALITY dan sesuai rules, setujui (APPROVED). Jika LOW QUALITY atau melanggar aturan pasti, TOLAK (REJECTED).
-Jika bukti price action masih kurang jelas, minta tunggu (NEED_MORE_CONFIRMATION).
-
-Balas STRICTLY dalam format JSON dengan 2 properti:
-"verdict": "APPROVED" atau "REJECTED" atau "NEED_MORE_CONFIRMATION"
-"reason": "Buat analisis mendalam tentang mengapa signal ini HIGH_QUALITY atau LOW_QUALITY. Berikan detail price action/sentimen apa yang mendasari keputusan. Sertakan pula saran perbaikan sinyal (misal: 'Perkecil jarak SL', 'Sebaiknya tunggu liquidity sapuan ke 2355'). Gunakan bahasa Indonesia baku profesional yang analitis dan terstruktur."`;
-
-    const criticRes = await generateContent(
-      criticPrompt,
-      "",
-      [],
-      [],
-      "gemini",
-      {
-        mode: "setup_validation",
-      },
-    );
-
-    let cleanRes = criticRes
-      .replace(/```json/g, "")
-      .replace(/```/g, "")
-      .trim();
-    try {
-      const parsed = JSON.parse(cleanRes);
-      if (
-        ["APPROVED", "REJECTED", "NEED_MORE_CONFIRMATION"].includes(
-          parsed.verdict,
-        )
-      ) {
-        return { verdict: parsed.verdict, reason: parsed.reason };
-      }
-    } catch (e: any) {
-      console.log("Chief Validator JSON parse failed:", cleanRes);
+if (process.env.GEMINI_API_KEY) {
+  defaultProvider = new GoogleGeminiProvider(process.env.GEMINI_API_KEY);
+} else {
+  // Fallback provider if no API key is present
+  class FallbackProvider implements AIProvider {
+    async generateContent(history: any[], newMessage: string, image: string | null, temperature: number, model: string): Promise<any> {
+      console.warn('No AI provider API key found. Using fallback provider.');
+      return Promise.resolve({ response: "This is a fallback response as no AI provider is configured." });
     }
-  } catch (e: any) {
-    console.error("Multi-Agent validation error:", e);
   }
-
-  return {
-    verdict: "NEED_MORE_CONFIRMATION",
-    reason:
-      "Validasi Multi-Agen gagal diproses oleh Gemini. Proteksi keamanan aktif, sistem masuk mode siaga.",
-  };
+  defaultProvider = new FallbackProvider();
 }
+
+export const aiAdapter = new AIAdapter(defaultProvider);
