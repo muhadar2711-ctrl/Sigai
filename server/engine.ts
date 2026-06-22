@@ -24,6 +24,7 @@ import { EAWebhookBridge } from "./execution/ea_webhook.js";
 
 const TIMEZONE = "Asia/Makassar";
 let isInitialized = false;
+let isSystemLocked = false;
 
 // --- STATE MACHINE TYPES ---
 type StepStatus = "AWAITING" | "ACTIVE" | "VALIDATED" | "APPROVED" | "REJECTED" | "EXPIRED" | "WAIT";
@@ -161,32 +162,42 @@ export function verificationGate(strategies: StrategySetup[], symbol: string): {
 
 // --- CORE PIPELINE ---
 export async function runTradingPipeline(symbolFetch: string, symbolDisp: string, tfBias: string, tfExec: string, tfConfirm: string, mode: string, force: boolean = false) {
+  if (isSystemLocked && !force) {
+    console.warn(`[PIPELINE] REJECTED: SYSTEM_BUSY for ${symbolDisp}. Mutual Exclusion active.`);
+    return;
+  }
+  
+  isSystemLocked = true;
   systemState.lastScan = new Date();
   
-  let m5Candles: OHLC[];
   try {
-    m5Candles = await fetchMarketData(symbolFetch, tfExec, 100);
-    if (!m5Candles || m5Candles.length === 0) return;
-    const lastPrice = m5Candles[m5Candles.length - 1].close;
-    systemState.prices[symbolDisp] = lastPrice;
-  } catch (e) { return; }
-
-  const lastCandle = m5Candles[m5Candles.length - 1];
-  const candleTime = new Date(lastCandle.timestamp).getTime();
-
-  const newsStatus = await checkNewsBlock();
-  systemState.isNewsBlocked = newsStatus.isBlocked;
-
-  for (const strategyId of Object.keys(systemState.strategies)) {
-    const signalKey = getSignalKey(symbolDisp, strategyId, candleTime);
-    if (processingLocks[signalKey] && !force) continue;
-    
+    let m5Candles: OHLC[];
     try {
-      processingLocks[signalKey] = true;
-      await processStrategySequential(strategyId, symbolDisp, m5Candles, signalKey);
-    } finally {
-      processingLocks[signalKey] = false;
+      m5Candles = await fetchMarketData(symbolFetch, tfExec, 100);
+      if (!m5Candles || m5Candles.length === 0) return;
+      const lastPrice = m5Candles[m5Candles.length - 1].close;
+      systemState.prices[symbolDisp] = lastPrice;
+    } catch (e) { return; }
+
+    const lastCandle = m5Candles[m5Candles.length - 1];
+    const candleTime = new Date(lastCandle.timestamp).getTime();
+
+    const newsStatus = await checkNewsBlock();
+    systemState.isNewsBlocked = newsStatus.isBlocked;
+
+    for (const strategyId of Object.keys(systemState.strategies)) {
+      const signalKey = getSignalKey(symbolDisp, strategyId, candleTime);
+      if (processingLocks[signalKey] && !force) continue;
+      
+      try {
+        processingLocks[signalKey] = true;
+        await processStrategySequential(strategyId, symbolDisp, m5Candles, signalKey);
+      } finally {
+        processingLocks[signalKey] = false;
+      }
     }
+  } finally {
+    isSystemLocked = false;
   }
 }
 
@@ -195,6 +206,16 @@ export async function runTradingPipeline(symbolFetch: string, symbolDisp: string
  * Jalankan pengujian instan pada data real-time terakhir (Line 18 & 22).
  */
 export async function runWalkforwardTest(symbol: string) {
+  if (isSystemLocked) {
+    return {
+      symbol,
+      timestamp: new Date().toISOString(),
+      verdict: "REJECTED",
+      audit_trail: ["[WALKFORWARD] SYSTEM_BUSY: Pipeline is currently running. Test aborted for integrity."],
+      strategies: []
+    };
+  }
+
   console.log(`[WALKFORWARD] Testing all strategies for ${symbol}...`);
   
   const symbolFetch = symbol === "XAUUSD" ? "GC=F" : "EUR=X";

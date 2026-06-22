@@ -82,7 +82,7 @@ const buildGeminiPayload = (history: any[], newMessage: string, images: string[]
     return { role, parts: [{ text: msg.content }] };
   });
 
-  // Instruksi Auditor Senior & Evidence Guard
+  // Instruksi Auditor Senior & Confidence Protocol
   const auditorInstruction = `
 [AUDITOR_PROTOCOL]: Bertindaklah sebagai Senior Trading Auditor (Pessimistic).
 Tugas utamamu adalah mencari alasan untuk me-REJECT sinyal. 
@@ -90,7 +90,14 @@ Tugas utamamu adalah mencari alasan untuk me-REJECT sinyal.
 - Periksa kesesuaian data harga (OHLC) secara mikroskopis.
 - Jika evidence tidak sinkron atau angka tidak logis, wajib jawab 'REJECT' dengan alasan teknis tajam.
 - Gunakan 'Evidence Source' sebagai landasan tunggal. Dilarang berhalusinasi.
-- Output: Clean, Sharp, Professional, No Small Talk.`;
+
+[CONFIDENCE_FILTER]: Wajib sertakan skor 'Confidence: [0-100]' dalam jawabanmu.
+[EVIDENCE_LEVEL]: Wajib tentukan 'Evidence Level: [HIGH|MEDIUM|LOW]' berdasarkan kualitas data real-time.
+- HIGH: Data OHLC lengkap + Konfirmasi Volume/Structure.
+- MEDIUM: Data OHLC ada tapi minim konfirmasi.
+- LOW: Data terpotong, tidak sinkron, atau terindikasi dummy.
+
+Output: Clean, Sharp, Professional, No Small Talk.`;
 
   const userParts: Part[] = [{ text: newMessage + auditorInstruction }];
   
@@ -131,7 +138,7 @@ class GoogleGeminiProvider implements AIProvider {
       const model = this.genAI.getGenerativeModel({ 
         model: modelName, 
         tools: [tradeSignalTool],
-        systemInstruction: "Kamu adalah Senior Audit Analyst. Gunakan 'Evidence-Based Reasoning'. Jika data harga kontradiktif atau tidak sinkron, keluarkan 'REJECT'. Dilarang memberikan data palsu/dummy."
+        systemInstruction: "Kamu adalah Senior Audit Analyst. Gunakan 'Evidence-Based Reasoning'. Jika data harga kontradiktif atau tidak sinkron, keluarkan 'REJECT'. Wajib menyertakan Confidence Score dan Evidence Level."
       });
       
       const contents = buildGeminiPayload(history, newMessage, images);
@@ -156,12 +163,28 @@ class GoogleGeminiProvider implements AIProvider {
           aggregatedResponse += chunkText;
         }
       }
-      
+
+      // Confidence Filter Parsing
+      const confidenceMatch = aggregatedResponse.match(/Confidence:\s*\[?(\d+)\]?/i);
+      const confidenceScore = confidenceMatch ? parseInt(confidenceMatch[1], 10) : 0;
+
       if (toolCalls.length > 0) {
+        if (confidenceScore < 80) {
+           return { 
+             response: `⚠️ **WAIT: INSUFFICIENT_CONFIDENCE (${confidenceScore}%)**. Auditor menunda eksekusi karena tingkat kepercayaan di bawah threshold 80%. Hubungi verifikasi manual.`,
+             success: false,
+             provider_status: "LOW_CONFIDENCE"
+           };
+        }
         return { tool_calls: toolCalls, success: true };
       }
 
-      return { response: aggregatedResponse, success: true };
+      // Final Output Refinement for Text responses
+      if (confidenceScore < 80 && !aggregatedResponse.includes("REJECT")) {
+        aggregatedResponse = `⚠️ **WAIT: NEED_MORE_CONFIRMATION**. \n\n${aggregatedResponse}`;
+      }
+
+      return { response: aggregatedResponse, success: true, confidence: confidenceScore };
 
     } catch (error: any) {
       console.error('Error saat generate content dengan Google Gemini:', error);
