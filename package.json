@@ -8,7 +8,7 @@
     "clean": "rimraf dist",
     "build:client": "vite build",
     "build:server": "tsc -p tsconfig.server.json",
-    "build": "npm run clean && npm run build:client && npm run build:server",
+    "build": "npm run build:client && npm run build:server",
     "start": "node dist/server.js",
     "preview": "vite preview"
   },
