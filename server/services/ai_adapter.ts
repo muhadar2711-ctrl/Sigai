@@ -1,4 +1,3 @@
-
 import { GoogleGenerativeAI, Content, Part, Tool } from '@google/generative-ai';
 
 // --- Interfaces ---
@@ -14,20 +13,36 @@ export interface AIProvider {
   generateContent(history: any[], newMessage: string, images: string[] | null, temperature: number, model: string): Promise<any>;
 }
 
-// --- Tool Definitions untuk Gemini ---
+// --- Tool Definitions untuk Gemini (Strict Validation) ---
 const tradeSignalTool: Tool = {
   functionDeclarations: [
     {
       name: 'execute_trade_signal',
-      description: 'Mengeksekusi sinyal perdagangan untuk tindakan BUY atau SELL.',
+      description: 'Mengeksekusi sinyal perdagangan ke terminal MT5 dengan parameter numerik ketat.',
       parameters: {
         type: 'OBJECT',
         properties: {
-          action: { type: 'STRING', description: "Aksi perdagangan, 'BUY' atau 'SELL'." },
-          symbol: { type: 'STRING', description: "Simbol instrumen keuangan, misal, 'XAUUSD'." },
-          stopLoss: { type: 'NUMBER', description: 'Harga untuk menutup posisi saat rugi.' },
-          takeProfit: { type: 'NUMBER', description: 'Harga untuk menutup posisi saat untung.' },
-          risk: { type: 'NUMBER', description: 'Persentase saldo akun yang dipertaruhkan.' },
+          action: { 
+            type: 'STRING', 
+            enum: ['BUY', 'SELL'],
+            description: "Aksi perdagangan wajib 'BUY' atau 'SELL' (Uppercase)." 
+          },
+          symbol: { 
+            type: 'STRING', 
+            description: "Simbol instrumen keuangan valid, misal: 'XAUUSD'." 
+          },
+          stopLoss: { 
+            type: 'NUMBER', 
+            description: 'Level harga Stop Loss (SL). Wajib angka positif > 0.' 
+          },
+          takeProfit: { 
+            type: 'NUMBER', 
+            description: 'Level harga Take Profit (TP). Wajib angka positif > 0.' 
+          },
+          risk: { 
+            type: 'NUMBER', 
+            description: 'Persentase risiko (0.1 - 5.0). Wajib angka.' 
+          },
         },
         required: ['action', 'symbol', 'stopLoss', 'takeProfit', 'risk'],
       },
@@ -35,41 +50,60 @@ const tradeSignalTool: Tool = {
   ],
 };
 
-// --- Gemini Provider (FIXED) ---
+// --- Data Integrity & Hallucination Prevention ---
+
+/**
+ * Verifikasi Integritas Data (Anti-Dummy/Anti-Hallucination)
+ * Memastikan data harga masuk akal sebelum diproses AI.
+ */
+const verifyDataIntegrity = (history: any[], newMessage: string): boolean => {
+  const fullContext = (JSON.stringify(history) + newMessage).toLowerCase();
+  
+  // Jika konteks mengandung indikasi trading tapi tidak ada angka valid
+  const hasTradingKeywords = /buy|sell|signal|entry|setup|xauusd|gold/.test(fullContext);
+  if (hasTradingKeywords) {
+    // Regex mencari angka desimal harga tipikal
+    const pricePattern = /\d{1,5}\.\d{1,5}/;
+    const hasPriceData = pricePattern.test(fullContext);
+    
+    if (!hasPriceData) {
+      console.error("[DATA_INTEGRITY] Gagal: Kata kunci trading ditemukan tetapi data harga (OHLC) hilang atau tidak valid.");
+      return false;
+    }
+  }
+  return true;
+};
 
 /**
  * Membangun payload yang valid untuk Google Gemini API.
- * Mengkonversi riwayat obrolan sederhana dan gambar base64 menjadi format Content[] yang benar.
  */
 const buildGeminiPayload = (history: any[], newMessage: string, images: string[] | null): Content[] => {
   const contents: Content[] = history.map(msg => {
-    // Frontend mengirim role 'assistant', backend Sigai perlu 'model'
     const role = msg.role === 'user' ? 'user' : 'model';
     return { role, parts: [{ text: msg.content }] };
   });
 
-  // Buat bagian untuk pesan baru dari pengguna
-  const userParts: Part[] = [{ text: newMessage }];
+  // Proteksi Hallucination Prevention: Sisipkan instruksi paksa pada pesan terbaru
+  const hallucinationGuard = "\n\n[SYSTEM_PROTECTION]: Wajib sertakan 'Evidence Source' (Sumber Bukti) untuk setiap angka harga atau level teknikal yang disebutkan. Dilarang keras merekayasa angka jika data tidak tersedia dalam context.";
+  const userParts: Part[] = [{ text: newMessage + hallucinationGuard }];
   
-  // Tambahkan gambar jika ada
   if (images && images.length > 0) {
     for (const imageBase64 of images) {
-      // Asumsikan gambar adalah JPEG jika tidak ada header, ini lebih aman
       const mimeType = 'image/jpeg'; 
       userParts.push({
         inlineData: {
           mimeType,
-          data: imageBase64, // Frontend sudah mengirim base64 murni
+          data: imageBase64,
         },
       });
     }
   }
 
-  // Tambahkan pesan baru dari pengguna ke dalam history
   contents.push({ role: 'user', parts: userParts });
-
   return contents;
 };
+
+// --- Gemini Provider ---
 
 class GoogleGeminiProvider implements AIProvider {
   private genAI: GoogleGenerativeAI;
@@ -80,15 +114,27 @@ class GoogleGeminiProvider implements AIProvider {
 
   async generateContent(history: any[], newMessage: string, images: string[] | null, temperature: number, modelName: string): Promise<any> {
     try {
-      const model = this.genAI.getGenerativeModel({ model: modelName, tools: [tradeSignalTool] });
+      // 1. Verifikasi Integritas Data sebelum pemanggilan API
+      if (!verifyDataIntegrity(history, newMessage)) {
+        return { 
+          response: "⚠️ **CONTEXT_SYNC_FAILED**: Data pasar real-time atau bukti harga tidak ditemukan dalam input. Sistem menolak pemrosesan untuk mencegah halusinasi.",
+          provider_status: "INTEGRITY_REJECTED"
+        };
+      }
+
+      const model = this.genAI.getGenerativeModel({ 
+        model: modelName, 
+        tools: [tradeSignalTool],
+        systemInstruction: "Kamu adalah mesin eksekusi trading yang hanya berbicara berdasarkan data nyata. Jangan pernah memberikan saran tanpa bukti angka. Jika data harga 0 atau tidak ada, katakan 'DATA TIDAK TERSEDIA'."
+      });
       
-      // Gunakan fungsi build payload yang sudah diperbaiki
       const contents = buildGeminiPayload(history, newMessage, images);
       
       const result = await model.generateContentStream({ 
         contents: contents,
         generationConfig: {
-          temperature,
+          temperature: temperature || 0.1, // Rendah untuk presisi
+          topP: 0.8,
         }
       });
 
@@ -96,37 +142,27 @@ class GoogleGeminiProvider implements AIProvider {
       let toolCalls: any[] = [];
 
       for await (const chunk of result.stream) {
-        // Deteksi dan kumpulkan panggilan tool
         if (chunk.functionCalls) {
           toolCalls.push(...chunk.functionCalls);
         }
-        
-        // Kumpulkan teks respons
         const chunkText = chunk.text();
         if(chunkText) {
           aggregatedResponse += chunkText;
         }
       }
       
-      // Jika ada panggilan tool, kembalikan dalam format yang diharapkan
       if (toolCalls.length > 0) {
-        return { tool_calls: toolCalls };
+        return { tool_calls: toolCalls, success: true };
       }
 
-      // Kembalikan respons teks biasa
-      return { response: aggregatedResponse };
+      return { response: aggregatedResponse, success: true };
 
     } catch (error: any) {
       console.error('Error saat generate content dengan Google Gemini:', error);
-      // Berikan pesan error yang lebih spesifik untuk debugging
-      if (error.message.includes('invalid') || error.message.includes('payload')) {
-        throw new Error(`Payload request tidak valid untuk Gemini. Cek format data. Error asli: ${error.message}`);
-      }
       throw new Error(`Error API Gemini: ${error.message}`);
     }
   }
 }
-
 
 // --- AI Adapter ---
 
@@ -142,24 +178,18 @@ class AIAdapter {
   }
 }
 
-// --- Inisialisasi Provider Default ---
 let defaultProvider: AIProvider;
 
 if (process.env.GEMINI_API_KEY) {
   defaultProvider = new GoogleGeminiProvider(process.env.GEMINI_API_KEY);
 } else {
-  // Fallback jika tidak ada API key
   class FallbackProvider implements AIProvider {
     async generateContent(history: any[], newMessage: string, images: string[] | null, temperature: number, model: string): Promise<any> {
-      console.warn('API Key AI tidak ditemukan. Menggunakan fallback provider.');
-      return Promise.resolve({ response: "Ini adalah respons fallback karena tidak ada provider AI yang dikonfigurasi." });
+      return Promise.resolve({ response: "API Key AI tidak dikonfigurasi. Sistem dalam mode OFFLINE." });
     }
   }
   defaultProvider = new FallbackProvider();
 }
 
 export const aiAdapter = new AIAdapter(defaultProvider);
-
-// Ekspor fungsi pembantu jika diperlukan di tempat lain
-export { buildGeminiPayload };
-
+export { buildGeminiPayload, verifyDataIntegrity };

@@ -3,11 +3,10 @@ import { memoryManager } from "./memory.js";
 import {
   validateSignalAdapter,
   chatCompletionFull,
-  generateContent,
   retrieveKnowledgeContext,
 } from "./services/ai_adapter.js";
 
-// --- TAHAP 2: PIPELINE ORKESTRASI TRADING ANALYST ---
+// --- TAHAP 2: PIPELINE ORKESTRASI TRADING ANALYST (STRICT EXECUTION ENGINE) ---
 
 export function detectTradingIntents(
   message: string,
@@ -16,6 +15,7 @@ export function detectTradingIntents(
   const intents: string[] = [];
   const msgLower = (message || "").toLowerCase();
 
+  // Primary Intent: Execution & Analysis (No General Mentoring)
   if (hasImage) {
     intents.push("Chart Analyst");
     intents.push("Market Structure Analyst");
@@ -57,9 +57,9 @@ export function detectTradingIntents(
     intents.push("News Analyst");
   }
 
-  // If it's a general question or conversational
+  // Force system into Analyst role if no intent detected
   if (intents.length === 0 && !hasImage) {
-    intents.push("Mentor Trading");
+    intents.push("Strategy Builder");
   }
 
   return [...new Set(intents)];
@@ -67,12 +67,8 @@ export function detectTradingIntents(
 
 export function resolveSkillChain(intents: string[]): string[] {
   const chain = [...intents];
-  if (
-    intents.includes("Strategy Builder") ||
-    intents.includes("Chart Analyst")
-  ) {
-    chain.push("Self Critic");
-  }
+  // Always include Verifier for consistency
+  chain.push("Verifier Agent");
   return chain;
 }
 
@@ -89,17 +85,12 @@ export async function runOrchestratedChat(
 }> {
   const hasImages = images_base64 && images_base64.length > 0;
   const activeSkills = detectTradingIntents(message, hasImages);
-  const fullChain = resolveSkillChain(activeSkills);
 
   const primaryMode = activeSkills.includes("Chart Analyst")
     ? "market_scan"
     : activeSkills.includes("News Analyst")
       ? "news_filter"
-      : activeSkills.includes("Strategy Builder")
-        ? "strategy_builder"
-        : activeSkills.includes("Risk Manager")
-          ? "risk_manager"
-          : "general";
+      : "strategy_builder";
 
   const rawBiasDetect =
     message.toLowerCase().includes("buy") ||
@@ -114,8 +105,9 @@ export async function runOrchestratedChat(
   const knowledgeContext = retrieveKnowledgeContext(activeSkills);
 
   let pySentiment = "Unknown";
+  let dataConfidence = 0;
 
-  // Real Media Sentiment extraction using NewsAPI
+  // Real-time Data Sync Check
   try {
     const newsApiKey = process.env.NEWSAPI_KEY || process.env.NEWS_API_KEY;
     if (newsApiKey) {
@@ -124,57 +116,24 @@ export async function runOrchestratedChat(
       const res = await axios.get(url, { timeout: 3000 });
       const articles = res.data.articles || [];
       if (articles.length > 0) {
-        const headlines = articles.map((a: any) => a.title).join(" | ");
-        pySentiment = `Real-time Market Headlines: ${headlines}`;
-      } else {
-        pySentiment =
-          "No recent major market headlines regarding Gold/USD found.";
+        pySentiment = articles.map((a: any) => a.title).join(" | ");
+        dataConfidence += 40; // Data available
       }
-    } else {
-      pySentiment =
-        "News API Key not configured; unable to fetch live media sentiment.";
     }
-  } catch (err: any) {
-    console.warn("Could not fetch media sentiment:", err.message);
+  } catch (err) {
+    console.warn("News sync failed.");
   }
 
-  const liveDataContext = `LIVE MARKET & SYSTEM CONTEXT SYNC:
-- Twitter/Media Sentiment: ${pySentiment}
-- Engine Mode & AutoTrade: ${systemState.engineMode || "STANDARD"} | ${systemState.robotStatus || "OFF"}
-- Is News Blocked Active: ${systemState.isNewsBlocked ? "YES (HIGH IMPACT NEWS DILUAR SANA, NO ENTRY)" : "NO"}
+  // Engine State Check
+  if (systemState.engineMode) dataConfidence += 60;
 
-WARNING KRITIS: 
-1. Gunakan Live Market Data dan matriks Strategi di atas (base system prompt) sebagai fakta utama. JANGAN merekayasa angka.
-2. TIDAK ADA HALUSINASI DATA. KETIKA HARGA ATAU SETUP TIDAK ADA, JAWAB "DATA TIDAK TERSEDIA".
-3. Jawab pertanyaan user dengan responsif, terstruktur, Cerdas, dan Profesional.`;
+  const liveDataContext = `[LIVE DATA SYNC STATUS: ${dataConfidence}%]
+- Media Sentiment: ${pySentiment}
+- Engine Mode: ${systemState.engineMode || "UNKNOWN"}
+- Robot Status: ${systemState.robotStatus || "OFF"}
+- News Block: ${systemState.isNewsBlocked ? "ACTIVE" : "INACTIVE"}
 
-  // Quick fallback if it's just a general question and we want faster natural processing
-  if (activeSkills.length === 1 && activeSkills[0] === "Mentor Trading") {
-    const sysContext = `${baseSystemPrompt}\n\n${liveDataContext}\n\n${knowledgeContext}\n\nTugasmu adalah sebagai Mentor Trading AI yang friendly, profesional, dan tajam. Jawab pertanyaan user secara kasual namun penuh insight. Tidak perlu memformat seperti robot report. Gunakan bahasa Indonesia.`;
-    try {
-      const res = await chatCompletionFull(
-        history.concat([{ role: "user", content: message }]),
-        sysContext,
-        undefined,
-        undefined,
-        { mode: "general" },
-      );
-      return {
-        finalAnswer:
-          res.choices[0]?.message?.content || "Sistem merespons dengan senyap.",
-        providerStatus: "primary_active",
-        detectedMode: "general",
-        intermediateSteps: [
-          {
-            agent: "Mentor AI",
-            content: "Processed gracefully as normal chat.",
-          },
-        ],
-      };
-    } catch (err: any) {
-      console.warn("[Mentor Chat] Failed, failing over.");
-    }
-  }
+STRICT RULE: Jika Data Sync < 50%, jawab "DATA TIDAK TERSEDIA". JANGAN HALUSINASI ANGKA.`;
 
   let intermediateSteps: { agent: string; content: string }[] = [];
   const messagesPayload = [
@@ -185,43 +144,33 @@ WARNING KRITIS:
     let skillInstruction = "";
     switch (skill) {
       case "Chart Analyst":
-        skillInstruction =
-          "Tugasmu membaca candle, FVG, Order Block, Liquidity Sweep berdasarkan data chart terkini.";
+        skillInstruction = "Menganalisa Candle, FVG, OB, Liquidity. Gunakan bukti visual dari gambar.";
         break;
       case "Market Structure Analyst":
-        skillInstruction =
-          "Tugasmu menentukan trend makro dan mikro (BOS/CHOCH).";
+        skillInstruction = "Menentukan BOS/CHOCH dan Trend Direction.";
         break;
       case "Strategy Builder":
-        skillInstruction =
-          "Tugasmu menyusun Setup Trading (Entry, SL, TP) dengan R:R minimal 1:1.5 berdasarkan konfirmasi data.";
+        skillInstruction = "Menyusun Entry, SL, TP (R:R min 1:1.5).";
         break;
       case "Risk Manager":
-        skillInstruction =
-          "Tugasmu mengevaluasi level stop loss, margin, dan menolak setup berisiko bodoh.";
+        skillInstruction = "Evaluasi Exposure dan Drawdown. Tolak setup jika SL tidak logis.";
         break;
       case "News Analyst":
-        skillInstruction =
-          "Tugasmu mengekstrapolasi data sentimen pasar, atau jika data news tersedia, korelasikan dampaknya terhadap usd.";
+        skillInstruction = "Korelasi dampak fundamental terhadap XAUUSD.";
         break;
       default:
-        skillInstruction = "Berikan analisa netral.";
+        skillInstruction = "Analisa teknikal objektif.";
         break;
     }
 
     const prompt = `${baseSystemPrompt}
-
 ${knowledgeContext}
-
 ${liveDataContext}
 
-INSTRUKSI INTERNAL SPESIALIS:
-Kamu bertindak eksklusif sebagai role: ${skill}.
+ROLE: ${skill}
 ${skillInstruction}
 
-ATURAN MUTLAK:
-1. DILARANG KERAS MENGARANG ANGKA. Gunakan "LIVE MARKET DATA SYNC".
-2. Bersikap objektif, jangan hype berlebihan. Susun draft temuan spesifik mu mengenai instruksi spesialis di atas berbasis data.`;
+CORE REQUIREMENT: Berikan BUKTI (Evidence) untuk setiap klaim. Jika evidence tidak ada, katakan "EVIDENCE TIDAK DITEMUKAN".`;
 
     try {
       const res = await chatCompletionFull(
@@ -244,30 +193,57 @@ ATURAN MUTLAK:
   const agentResults = await Promise.all(agentTasks);
   intermediateSteps = agentResults.filter((r) => r.content.length > 5);
 
-  if (intermediateSteps.length === 0) {
-    return {
-      finalAnswer:
-        "NO TRADE / DATA KOSONG. Gagal mendapatkan umpan balik dari para agen internal.",
-      providerStatus: "primary_active",
-      detectedMode: primaryMode,
-    };
+  // --- [VERIFICATION GATE] ---
+  const verifierInstruction = `Kamu adalah Quality Control & Verification Agent.
+Tugasmu mendeteksi KONTRADIKSI dan VALIDASI BUKTI dari draf agen.
+
+DRAF INTERNAL:
+${intermediateSteps.map((s) => `[${s.agent}]: ${s.content}`).join("\n")}
+
+KRITERIA REJECT (Wajib Jawab 'WAIT' atau 'REJECT'):
+1. Agen Strategy dan Risk bertolak belakang.
+2. Klaim teknikal (BOS/FVG) tidak didukung data Chart Analyst.
+3. Live Data Sync tidak memadai untuk eksekusi.
+4. Terdapat indikasi halusinasi angka.
+
+Output: Berikan 'VERDICT' (CLEAN/CONTRADICTION/LOW_EVIDENCE) dan alasan singkat.`;
+
+  let verificationVerdict = "CLEAN";
+  try {
+    const vRes = await chatCompletionFull(
+      [{ role: "user", content: verifierInstruction }],
+      "Verification Mode: ON",
+      undefined,
+      undefined,
+      { mode: "general" },
+    );
+    const vContent = vRes.choices[0]?.message?.content || "";
+    intermediateSteps.push({ agent: "Verification Gate", content: vContent });
+    if (vContent.includes("CONTRADICTION") || vContent.includes("LOW_EVIDENCE")) {
+      verificationVerdict = "REJECTED";
+    }
+  } catch (e) {
+    verificationVerdict = "LOW_EVIDENCE";
   }
 
-  const criticSystemInstruction = `Kamu adalah Chief Trading Analyst AI untuk Sistem SMC XAUUSD.
-Tugasmu mereview hasil investigasi Agen Spesialis di bawah, dan menyampaikan jawaban TUNGGAL FINAL kepada user.
+  // --- [FINAL CHIEF ANALYSIS] ---
+  const criticSystemInstruction = `Kamu adalah Chief Trading Analyst AI.
+Tugasmu melakukan audit akhir terhadap bukti (evidence) yang diberikan tim.
+
+ATURAN AUDIT:
+- Jika Verifier menyatakan REJECTED/LOW_EVIDENCE, kamu WAJIB menjawab "WAIT - Evidence Tidak Mencukupi" atau "NO TRADE".
+- Dilarang memperkuat klaim agen jika bukti visual/data tidak sinkron.
+- Struktur Jawaban: BIAS | ENTRY | SL | TP | CONFIDENCE | RATIONALE.
+- Jika data sync gagal, jawab "DATA TIDAK TERSEDIA".
 
 ${memoryContext}
-
-ATURAN PENULISAN:
-- Jika user HANYA BERTANYA, jawab dengan gaya percakapan yang cerdas, rapi, dan profesional.
-- JIKA USER MEMINTA ANALISA SETUP/SIGNAL, sertakan ringkasan setup terstruktur (Format Bebas namun harus termuat: Bias, Entry Zone, SL, TP, Confidence, Final Action).
-- JANGAN BERHALUSINASI DATA. Jika agen internal bilang tidak ada konfirmasi kuat, katakan NO TRADE atau WAIT.
-- Berikan insight berkelas (jangan kaku seperti mesin robot). Gunakan bahasa Indonesia.`;
+Gunakan Bahasa Indonesia. Profesional dan Tanpa Halusinasi.`;
 
   const draftCombined = intermediateSteps
     .map((step) => `--- [DRAFT ${step.agent}] ---\n${step.content}`)
     .join("\n\n");
-  const criticPrompt = `PESAN USER KEPADA KITA: "${message}" \n\nBERIKUT HASIL DRAFT DARI TIM MULTI-AGEN KITA:\n\n${draftCombined}\n\nRangkum temuan internal mereka dan ciptakan jawaban komprehensif, presisi, dan natural untuk pengguna.`;
+  
+  const criticPrompt = `STATUS VERIFIKASI: ${verificationVerdict}\n\nUSER REQUEST: "${message}" \n\nDRAF TIM:\n\n${draftCombined}`;
 
   let finalAnswer = "";
   try {
@@ -278,10 +254,9 @@ ATURAN PENULISAN:
       undefined,
       { mode: "general" },
     );
-    finalAnswer =
-      criticRes.choices[0]?.message?.content || "Gagal membangun report";
+    finalAnswer = criticRes.choices[0]?.message?.content || "DATA TIDAK TERSEDIA";
   } catch (e) {
-    finalAnswer = "Sistem Critic gagal merespons. Lakukan check log sistem.";
+    finalAnswer = "CRITICAL ERROR: Sistem gagal membangun laporan final.";
   }
 
   return {
@@ -291,8 +266,6 @@ ATURAN PENULISAN:
     intermediateSteps,
   };
 }
-
-// --- ORIGINAL EXPERT EXPORTS ---
 
 export async function validateSignalWithAI(
   signalData: any,
@@ -310,35 +283,9 @@ export async function chatWithMechanic(
   customKey?: string,
 ): Promise<string> {
   const systemInstruction = `Kamu adalah XAUUSD AI Architect. 
-Capabilities: Senior TypeScript, React, NodeJS, Firebase, DevOps, Trading Systems, & SMC Engineer.
-Tool tersedia (bila ini prompt system khusus): System Status, System Logs, Deployment Logs, Configuration Files, Environment Variables, Signal History, Market Data, Source Code.
+AUDIT MODE: Cari Root Cause, File, Line, dan berikan Patch Valid. 
+DILARANG HALUSINASI KODE. Jika tidak tahu, katakan 'LOG TIDAK CUKUP'.`;
 
-Mendukung command: /fix, /analyze, /review, /refactor, /patch, /deploy, /debug, /scan.
-Jika kamu melihat error log (contoh log Railway/Vercel/TS/Runtime), otomatis lakukan mode AUTONOMOUS:
-
-Balas dengan format presisi berikut:
-
-ROOT CAUSE:
-<penjelasan root cause dalam bahasa Indonesia yang ringkas>
-
-FILE:
-<exact file path penyebab error>
-
-LINE:
-<exact line number>
-
-FIX:
-<deskripsi solusi deployment atau code fix>
-
-PATCH:
-<git diff patch format atau kode perbaikan utuh>
-
-CONFIDENCE:
-<skor dalam %>
-
-Selalu jawab dalam bahasa Indonesia.`;
-
-  // Format history for OpenAI SDK
   const formattedHistory = history
     .filter((msg: any) => msg.role === "user" || msg.role === "model")
     .map((msg: any) => ({
@@ -355,8 +302,6 @@ Selalu jawab dalam bahasa Indonesia.`;
     );
     return response.choices[0]?.message?.content || "No response generated.";
   } catch (err: any) {
-    console.error("Mechanic AI Error:", err);
-    let errMessage = err.message || "";
-    return `AI service temporarily unavailable. Error: ${errMessage}`;
+    return `AI Error: ${err.message}`;
   }
 }
