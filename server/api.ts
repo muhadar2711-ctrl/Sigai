@@ -213,8 +213,6 @@ apiRouter.get("/ai/history", requireAdminAuth, (req, res) => {
 });
 
 // 6. POST /api/ai/chat (Otak Chat + Vision)
-import { GoogleGenAI } from "@google/genai";
-
 apiRouter.post(
   "/ai/chat",
   requireAdminAuth,
@@ -395,13 +393,13 @@ Fokus memberikan audit, strategi, validasi sinyal, dan analisis teknikal berdasa
           function: {
             name: "queryMCPServer",
             description:
-              "Query Python MCP server untuk analisa advanced. Tersedia endpoint: '/api/v1/data/twelvedata/quote?symbol=XAU/USD', '/api/v1/sentiment/twitter?symbol=XAUUSD', '/api/v1/news/forexfactory'. Prefix /api/v1 otomatis ditambahkan.",
+              "Query Python MCP backend untuk data market atau status. Hanya gunakan endpoint yang valid: /api/v1/health, /api/v1/mt5/balance, /api/v1/mt5/positions.",
             parameters: {
               type: "object",
               properties: {
                 endpoint: {
                   type: "string",
-                  description: "Contoh: /api/v1/data/twelvedata/quote?symbol=XAU/USD",
+                  description: "Contoh: /api/v1/health",
                 },
               },
               required: ["endpoint"],
@@ -413,7 +411,7 @@ Fokus memberikan audit, strategi, validasi sinyal, dan analisis teknikal berdasa
           function: {
             name: "gitCommit",
             description:
-              "Commit n push hasil kerja mu ke github supaya deploy ke railway/codemagic terpicu.",
+              "Commit n push hasil kerja mu ke github supaga deploy ke railway/codemagic terpicu.",
             parameters: {
               type: "object",
               properties: {
@@ -639,7 +637,7 @@ Fokus memberikan audit, strategi, validasi sinyal, dan analisis teknikal berdasa
   },
 );
 
-// 6. GET /api/agent/rollback
+// 7. GET /api/agent/rollback
 apiRouter.get("/agent/rollback", requireAdminAuth, (req, res) => {
   try {
     console.log(`[AI_AGENT] User minta ROLLBACK`);
@@ -658,19 +656,6 @@ apiRouter.get("/agent/rollback", requireAdminAuth, (req, res) => {
 apiRouter.post("/system/errors/clear", requireAdminAuth, (req, res) => {
   systemState.errors = [];
   res.json({ success: true, message: "Errors cleared", data: [] });
-});
-
-apiRouter.post("/ai/rollback", requireAdminAuth, (req, res) => {
-  try {
-    const result = gitAgent.rollbackTo("HEAD~1");
-    memoryManager.saveMemory(
-      "past_decisions",
-      "Emergency Rollback executed to HEAD~1",
-    );
-    res.json({ success: true, ...result });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
-  }
 });
 
 apiRouter.get("/health", (req, res) => {

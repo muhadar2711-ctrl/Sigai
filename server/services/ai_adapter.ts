@@ -300,6 +300,35 @@ export function markProviderSuccess(provider: string) {
 }
 
 /**
+ * Extract mimeType from data URL or default to image/jpeg
+ * Handles: data:image/png;base64,..., data:image/webp;base64,..., data:image/jpeg;base64,...
+ */
+function extractMimeType(dataUrl: string): string {
+  if (!dataUrl) return "image/jpeg";
+  const match = dataUrl.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9\-\+\.]+);base64,/);
+  if (match && match[1]) {
+    return match[1];
+  }
+  return "image/jpeg";
+}
+
+/**
+ * Normalize base64 image data — strip data URL prefix if present
+ * Returns { base64, mimeType }
+ */
+function normalizeBase64Image(input: string): { base64: string; mimeType: string } {
+  if (!input) return { base64: "", mimeType: "image/jpeg" };
+  
+  if (input.includes(",")) {
+    const mimeType = extractMimeType(input);
+    const base64 = input.split(",")[1];
+    return { base64, mimeType };
+  }
+  
+  return { base64: input, mimeType: "image/jpeg" };
+}
+
+/**
  * Map OpenAI-style tools to Gemini functionDeclarations format
  */
 function mapToolsToGemini(tools: any[]): any {
@@ -318,24 +347,13 @@ function mapToolsToGemini(tools: any[]): any {
 }
 
 /**
- * Normalize base64 image data — strip data URL prefix if present
- * Returns pure base64 string
- */
-function normalizeBase64Image(input: string): string {
-  if (!input) return "";
-  // Strip data URL prefix if present
-  if (input.includes(",")) {
-    return input.split(",")[1];
-  }
-  return input;
-}
-
-/**
  * Build Gemini contents array from messages history
  * Gemini uses: { role: "user"|"model", parts: [{ text }, { inlineData? }] }
  * 
- * CRITICAL FIX: Images are merged into the LAST user message as inlineData parts,
- * not as separate messages. This matches the Gemini SDK expectation.
+ * CRITICAL FIX: 
+ * - Images are merged into the LAST user message as inlineData parts
+ * - Tool messages (role: "tool") are converted to user messages with functionResponse
+ * - Tool call messages (assistant with tool_calls) are converted to model messages with functionCall
  */
 function buildGeminiContents(
   messages: any[],
@@ -348,17 +366,66 @@ function buildGeminiContents(
 ): any[] {
   const contents: any[] = [];
 
-  // Add history messages (excluding the last user message which we'll handle separately)
-  const historyMessages = messages.slice(0, -1);
-  const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+  // Process all messages
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    const isLastMessage = i === messages.length - 1;
 
-  for (const msg of historyMessages) {
     if (msg.role === "system") continue; // system is handled via config
 
     const role = msg.role === "assistant" ? "model" : "user";
     let parts: any[] = [];
 
-    // Handle content
+    // Handle tool response messages (role: "tool")
+    if (msg.role === "tool" && msg.tool_call_id) {
+      // Gemini uses functionResponse for tool results
+      const responseText = typeof msg.content === "string" 
+        ? msg.content 
+        : JSON.stringify(msg.content);
+      
+      // Parse the tool name from the message or use a default
+      const toolName = msg.name || "unknown_tool";
+      
+      parts.push({ 
+        functionResponse: {
+          name: toolName,
+          response: { name: toolName, content: responseText }
+        }
+      });
+      
+      contents.push({ role: "user", parts });
+      continue;
+    }
+
+    // Handle assistant messages with tool_calls
+    if (msg.role === "assistant" && msg.tool_calls && msg.tool_calls.length > 0) {
+      for (const tc of msg.tool_calls) {
+        let args = {};
+        try {
+          args = JSON.parse(tc.arguments || "{}");
+        } catch (e) {
+          args = {};
+        }
+        parts.push({
+          functionCall: {
+            name: tc.function?.name || tc.name || "unknown",
+            args: args
+          }
+        });
+      }
+      
+      // Also add text content if present
+      if (msg.content && typeof msg.content === "string") {
+        parts.unshift({ text: msg.content });
+      }
+      
+      if (parts.length > 0) {
+        contents.push({ role: "model", parts });
+      }
+      continue;
+    }
+
+    // Handle regular content messages
     if (typeof msg.content === "string") {
       parts.push({ text: msg.content });
     } else if (Array.isArray(msg.content)) {
@@ -368,71 +435,32 @@ function buildGeminiContents(
           parts.push({ text: part.text });
         } else if (part.type === "image_url") {
           const url = part.image_url?.url || "";
-          const b64 = normalizeBase64Image(url);
-          if (b64) {
-            parts.push({ inlineData: { data: b64, mimeType: "image/jpeg" } });
+          const { base64, mimeType } = normalizeBase64Image(url);
+          if (base64) {
+            parts.push({ inlineData: { data: base64, mimeType } });
           }
         }
       }
     }
 
-    // Handle tool responses — convert to user message with functionResponse
-    if (msg.role === "tool" && msg.tool_call_id) {
-      // Gemini uses functionResponse for tool results
-      const responseText = typeof msg.content === "string" 
-        ? msg.content 
-        : JSON.stringify(msg.content);
-      parts.push({ 
-        functionResponse: {
-          name: msg.name || "unknown",
-          response: { content: responseText }
-        }
-      });
-    }
-
-    if (parts.length > 0) {
-      contents.push({ role, parts });
-    }
-  }
-
-  // Handle the last user message — merge text + images into ONE message
-  if (lastMessage) {
-    const role = lastMessage.role === "assistant" ? "model" : "user";
-    let parts: any[] = [];
-
-    // Add text content from last message
-    if (typeof lastMessage.content === "string" && lastMessage.content) {
-      parts.push({ text: lastMessage.content });
-    } else if (Array.isArray(lastMessage.content)) {
-      for (const part of lastMessage.content) {
-        if (part.type === "text") {
-          parts.push({ text: part.text });
-        } else if (part.type === "image_url") {
-          const url = part.image_url?.url || "";
-          const b64 = normalizeBase64Image(url);
-          if (b64) {
-            parts.push({ inlineData: { data: b64, mimeType: "image/jpeg" } });
+    // Merge images from options into the LAST user message
+    if (isLastMessage && role === "user") {
+      if (options?.images_base64 && options.images_base64.length > 0) {
+        for (const imgBase64 of options.images_base64) {
+          const { base64, mimeType } = normalizeBase64Image(imgBase64);
+          if (base64) {
+            parts.push({
+              inlineData: { data: base64, mimeType },
+            });
           }
         }
-      }
-    }
-
-    // Merge images from options into the SAME last user message
-    if (options?.images_base64 && options.images_base64.length > 0) {
-      for (const imgBase64 of options.images_base64) {
-        const b64Data = normalizeBase64Image(imgBase64);
-        if (b64Data) {
+      } else if (options?.image_base64) {
+        const { base64, mimeType } = normalizeBase64Image(options.image_base64);
+        if (base64) {
           parts.push({
-            inlineData: { data: b64Data, mimeType: "image/jpeg" },
+            inlineData: { data: base64, mimeType },
           });
         }
-      }
-    } else if (options?.image_base64) {
-      const b64Data = normalizeBase64Image(options.image_base64);
-      if (b64Data) {
-        parts.push({
-          inlineData: { data: b64Data, mimeType: "image/jpeg" },
-        });
       }
     }
 
@@ -523,6 +551,7 @@ export async function generateContent(
               },
             });
 
+            // Handle function calls from Gemini
             if (response.functionCalls && response.functionCalls.length > 0) {
               const tCalls = response.functionCalls.map((fc: any) => ({
                 id: Math.random().toString(36).substring(2, 10),
@@ -532,7 +561,11 @@ export async function generateContent(
                   arguments: JSON.stringify(fc.args),
                 },
               }));
-              responseContent = JSON.stringify({ role: "assistant", content: response.text || "", tool_calls: tCalls });
+              responseContent = JSON.stringify({ 
+                role: "assistant", 
+                content: response.text || "", 
+                tool_calls: tCalls 
+              });
             } else {
               responseContent = response.text || "";
             }
@@ -607,22 +640,20 @@ export async function generateContent(
 
             if (options?.images_base64 && options.images_base64.length > 0) {
               for (const img of options.images_base64) {
+                const { base64, mimeType } = normalizeBase64Image(img);
                 contentArr.push({
                   type: "image_url",
                   image_url: {
-                    url: img.includes(",")
-                      ? img
-                      : `data:image/jpeg;base64,${img}`,
+                    url: `data:${mimeType};base64,${base64}`,
                   },
                 });
               }
             } else if (options?.image_base64) {
+              const { base64, mimeType } = normalizeBase64Image(options.image_base64);
               contentArr.push({
                 type: "image_url",
                 image_url: {
-                  url: options.image_base64.includes(",")
-                    ? options.image_base64
-                    : `data:image/jpeg;base64,${options.image_base64}`,
+                  url: `data:${mimeType};base64,${base64}`,
                 },
               });
             }
@@ -740,15 +771,19 @@ export async function chatCompletionFull(
   try {
     const parsed = JSON.parse(rawRes);
     if (parsed && parsed.role === "assistant") {
-      return { choices: [{ message: parsed }] };
-    }
-    if (parsed && parsed.tool_calls) {
-      return { choices: [{ message: { role: "assistant", content: parsed.content || "", tool_calls: parsed.tool_calls } }] };
+      // This is a tool_calls response from Gemini
+      if (parsed.tool_calls) {
+        return { choices: [{ message: { role: "assistant", content: parsed.content || "", tool_calls: parsed.tool_calls } }] };
+      }
+      // Plain text response wrapped as assistant message
+      return { choices: [{ message: { content: parsed.content || rawRes } }] };
     }
     if (parsed && parsed.error_fallback) {
       throw new Error("Provider exhausted"); // bubble up error logically if expected by old callers
     }
-  } catch (e) {}
+  } catch (e) {
+    // Not JSON — it's a plain text response, return as-is
+  }
 
   return { choices: [{ message: { content: rawRes } }] };
 }

@@ -7,6 +7,7 @@ import {
   Activity,
   Settings,
   Ban,
+  Wifi,
 } from "lucide-react";
 import { Card, cn } from "./ui";
 
@@ -78,6 +79,7 @@ export const McpSystemGrid = () => {
               {engines.map((engine) => {
                 const isOnline =
                   engine.status === "ONLINE" || engine.status === "READY";
+                const isReachable = engine.status === "REACHABLE";
                 const isDegraded =
                   engine.status === "DEGRADED" ||
                   engine.status === "WAITING_FOR_TERMINAL";
@@ -96,11 +98,13 @@ export const McpSystemGrid = () => {
                       "p-2 border relative overflow-hidden transition-colors rounded-lg",
                       isOnline
                         ? "border-brand-success/20 bg-brand-success/[0.03] hover:border-brand-success/40"
-                        : isDegraded
-                          ? "border-brand-warning/30 bg-brand-warning/5 hover:border-brand-warning/50"
-                          : isDisabled
-                            ? "border-brand-border/20 bg-black/20 opacity-70"
-                            : "border-brand-danger/30 bg-brand-danger/5 hover:border-brand-danger/50",
+                        : isReachable
+                          ? "border-brand-info/20 bg-brand-info/[0.03] hover:border-brand-info/40"
+                          : isDegraded
+                            ? "border-brand-warning/30 bg-brand-warning/5 hover:border-brand-warning/50"
+                            : isDisabled
+                              ? "border-brand-border/20 bg-black/20 opacity-70"
+                              : "border-brand-danger/30 bg-brand-danger/5 hover:border-brand-danger/50",
                     )}
                   >
                     <div className="flex justify-between items-start mb-0.5">
@@ -113,6 +117,9 @@ export const McpSystemGrid = () => {
                       <div className="w-[15%] flex justify-end">
                         {isOnline && (
                           <CheckCircle className="w-3 h-3 text-brand-success" />
+                        )}
+                        {isReachable && (
+                          <Wifi className="w-3 h-3 text-brand-info" />
                         )}
                         {isDisabled && (
                           <Ban className="w-3 h-3 text-brand-text-sec opacity-40" />
@@ -133,11 +140,13 @@ export const McpSystemGrid = () => {
                         "text-[9px] md:text-[10px] font-mono tracking-widest truncate max-w-full uppercase font-bold",
                         isOnline
                           ? "text-brand-success opacity-80"
-                          : isDisabled
-                            ? "text-brand-text-sec opacity-50"
-                            : isError
-                              ? "text-brand-danger opacity-80"
-                              : "text-brand-warning opacity-80",
+                          : isReachable
+                            ? "text-brand-info opacity-80"
+                            : isDisabled
+                              ? "text-brand-text-sec opacity-50"
+                              : isError
+                                ? "text-brand-danger opacity-80"
+                                : "text-brand-warning opacity-80",
                       )}
                     >
                       {engine.status}{" "}
