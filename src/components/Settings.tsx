@@ -15,7 +15,7 @@ import {
   Activity,
 } from "lucide-react";
 import { apiFetch } from "../lib/api";
-import { McpSystemGrid } from "./McpSystemGrid";
+import McpSystemGrid from "./McpSystemGrid";
 
 export function Settings() {
   const [openSection, setOpenSection] = useState<string | null>(null);

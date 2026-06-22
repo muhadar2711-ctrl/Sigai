@@ -1,6 +1,31 @@
 
 import { TradeSignal } from '../../server/services/ai_adapter';
 
+/**
+ * Generic API fetch wrapper
+ */
+export const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
+  const response = await fetch(`/api${endpoint}`, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...options.headers,
+    },
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    console.error('API Fetch Error:', response.status, errorBody);
+    throw new Error(
+      `Network response was not ok. Status: ${response.status}. Body: ${errorBody}`
+    );
+  }
+
+  const data = await response.json();
+  return { data };
+};
+
+
 // Fungsi ini tetap tidak berubah, digunakan oleh AIChat.tsx
 export const sendChatMessage = async (
   message: string,
