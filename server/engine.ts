@@ -89,9 +89,9 @@ export async function bootstrapSystem() {
     initSupabase();
     initializeEngines();
     isInitialized = true;
-    console.log("[BOOTSTRAP] System Integrated & Sequential Pipeline Online.");
+    console.log(`[${new Date().toISOString()}] [BOOTSTRAP] System Integrated & Sequential Pipeline Online.`);
   } catch (e) {
-    console.error("[BOOTSTRAP FATAL]", e);
+    console.error(`[${new Date().toISOString()}] [BOOTSTRAP FATAL]`, e);
   }
 }
 
@@ -138,27 +138,27 @@ export function verificationGate(strategies: StrategySetup[], symbol: string): {
   // 1. Conflict & Contradiction Detection (Line 15, 18)
   const directions = activeSignals.map(s => s.evidence?.type).filter(Boolean);
   if (directions.includes("BUY") && directions.includes("SELL")) {
-    audit_trail.push("[CONFLICT] Contradiction between Asian Session bias and current strategy signals. Forcing REJECT.");
+    audit_trail.push(`[${new Date().toISOString()}] [CONFLICT] Contradiction between Asian Session bias and current strategy signals. Forcing REJECT.`);
     return { verdict: "REJECTED", audit_trail };
   }
 
   for (const strat of activeSignals) {
     // 2. Multi-Timeframe Evidence Check (Line 22)
     if (!strat.evidence?.multiTimeframeConfirmed) {
-      audit_trail.push(`[MTF_ERROR] ${strat.name}: Single timeframe decision detected. Entry blocked.`);
+      audit_trail.push(`[${new Date().toISOString()}] [MTF_ERROR] ${strat.name}: Single timeframe decision detected. Entry blocked.`);
       return { verdict: "HOLD", audit_trail };
     }
 
     // 3. Evidence Level & No Forced Entry (Line 58)
     if (strat.evidenceLevel < 80) {
-      audit_trail.push(`[LOW_CONFIDENCE] ${strat.name}: Evidence level ${strat.evidenceLevel}% is below 80% threshold. Forcing HOLD.`);
+      audit_trail.push(`[${new Date().toISOString()}] [LOW_CONFIDENCE] ${strat.name}: Evidence level ${strat.evidenceLevel}% is below 80% threshold. Forcing HOLD.`);
       return { verdict: "HOLD", audit_trail };
     }
 
     // 4. Data & Quality Sync (Line 16, 19)
     const ev = strat.evidence;
     if (!ev || !ev.entry || !ev.sl || !ev.tp1) {
-      audit_trail.push(`[DATA_SYNC] ${strat.name}: Invalid parameter sync. Status: WAIT.`);
+      audit_trail.push(`[${new Date().toISOString()}] [DATA_SYNC] ${strat.name}: Invalid parameter sync. Status: WAIT.`);
       return { verdict: "WAIT", audit_trail };
     }
 
@@ -166,19 +166,19 @@ export function verificationGate(strategies: StrategySetup[], symbol: string): {
     const reward = Math.abs(ev.tp1 - ev.entry);
     const rr = risk > 0 ? reward / risk : 0;
     if (rr < 1.5) {
-      audit_trail.push(`[RISK_GATE] ${strat.name}: RR Ratio ${rr.toFixed(2)} failed risk gate (Min 1.5).`);
+      audit_trail.push(`[${new Date().toISOString()}] [RISK_GATE] ${strat.name}: RR Ratio ${rr.toFixed(2)} failed risk gate (Min 1.5).`);
       return { verdict: "REJECTED", audit_trail };
     }
   }
 
-  audit_trail.push("[AUDIT_SUCCESS] Core rules validated. Execution bridge authorized.");
+  audit_trail.push(`[${new Date().toISOString()}] [AUDIT_SUCCESS] Core rules validated. Execution bridge authorized.`);
   return { verdict: "APPROVED", audit_trail };
 }
 
 // --- CORE PIPELINE ---
 export async function runTradingPipeline(symbolFetch: string, symbolDisp: string, tfBias: string, tfExec: string, tfConfirm: string, mode: string, force: boolean = false) {
   if (isSystemLocked && !force) {
-    console.warn(`[PIPELINE] REJECTED: SYSTEM_BUSY for ${symbolDisp}.`);
+    console.warn(`[${new Date().toISOString()}] [PIPELINE] REJECTED: SYSTEM_BUSY for ${symbolDisp}.`);
     return;
   }
   
@@ -190,7 +190,27 @@ export async function runTradingPipeline(symbolFetch: string, symbolDisp: string
     try {
       m5Candles = await fetchMarketData(symbolFetch, tfExec, 100);
       if (!m5Candles || m5Candles.length === 0) return;
-      systemState.prices[symbolDisp] = m5Candles[m5Candles.length - 1].close;
+
+      // --- DATA RECENCY CHECK (Auditability First) ---
+      const lastCandle = m5Candles[m5Candles.length - 1];
+      const dataTimestamp = new Date(lastCandle.timestamp).getTime();
+      const now = Date.now();
+      const ageMinutes = (now - dataTimestamp) / (1000 * 60);
+
+      if (ageMinutes > 15) {
+        console.error(`[${new Date().toISOString()}] [PIPELINE_REJECTED] Stale market data for ${symbolDisp}. Age: ${ageMinutes.toFixed(1)}m. Threshold: 15m.`);
+        systemState.lastScanError = "STALE_MARKET_DATA";
+        // Notify dashboard of rejection
+        Object.keys(systemState.strategies).forEach(id => {
+          if (id.includes(symbolDisp)) {
+             systemState.strategies[id].status = "REJECTED";
+             systemState.strategies[id].auditReason = `REJECTED: STALE_MARKET_DATA (${ageMinutes.toFixed(1)}m old)`;
+          }
+        });
+        return;
+      }
+
+      systemState.prices[symbolDisp] = lastCandle.close;
     } catch (e) { return; }
 
     const lastCandle = m5Candles[m5Candles.length - 1];
@@ -215,7 +235,7 @@ export async function runTradingPipeline(symbolFetch: string, symbolDisp: string
 }
 
 export async function runWalkforwardTest(symbol: string) {
-  if (isSystemLocked) return { verdict: "REJECTED", audit_trail: ["System busy"] };
+  if (isSystemLocked) return { verdict: "REJECTED", audit_trail: [`[${new Date().toISOString()}] System busy`] };
   const symbolFetch = symbol === "XAUUSD" ? "GC=F" : "EUR=X";
   await runTradingPipeline(symbolFetch, symbol, "H1", "M5", "M1", "Walkforward", true);
   const strategies = Object.values(systemState.strategies) as StrategySetup[];
@@ -230,7 +250,7 @@ async function processStrategySequential(strategyId: string, symbol: string, can
   if (strategy.lastSignalKey !== signalKey) {
     strategy.steps.forEach((s: any) => { 
       s.status = "AWAITING"; 
-      s.auditReason = "New candle detected, resetting step context."; 
+      s.auditReason = `[${new Date().toISOString()}] New candle detected, resetting step context.`; 
     });
     strategy.lastSignalKey = signalKey;
     strategy.status = "SCANNING";
@@ -249,7 +269,7 @@ async function processStrategySequential(strategyId: string, symbol: string, can
 
     const res = await validateStepLogic(strategyId, step.id, symbol, candles);
     step.status = res.status;
-    step.auditReason = res.reason;
+    step.auditReason = `[${new Date().toISOString()}] ${res.reason}`;
     step.updatedAt = new Date().toISOString();
     
     if (res.status !== "VALIDATED") {
@@ -274,6 +294,7 @@ async function processStrategySequential(strategyId: string, symbol: string, can
     if (signalCooldowns[signalKey] && Date.now() < signalCooldowns[signalKey]) return;
 
     // Line 19: Sinkronkan dengan AI Critic sebelum Dispatch
+    // AI Critic is ONLY allowed to process recent data. 
     const aiResult = await validateSignalWithAI(strategy.evidence, {});
 
     if (aiResult.verdict === "APPROVED") {
@@ -281,7 +302,7 @@ async function processStrategySequential(strategyId: string, symbol: string, can
       await dispatchFinalSignal(strategy.evidence, aiResult, signalKey);
     } else {
       strategy.status = "REJECTED";
-      strategy.auditReason = `AI Critic Rejected: ${aiResult.reason}`;
+      strategy.auditReason = `[${new Date().toISOString()}] AI Critic Rejected: ${aiResult.reason}`;
       signalCooldowns[signalKey] = Date.now() + 3600000;
     }
   }

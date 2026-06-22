@@ -4,8 +4,9 @@ dist/
 logs/
 .DS_Store
 *.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.idx/
+package-lock.json
 .vscode/
+.idx/
+data/
+public/dist/
+tmp/
