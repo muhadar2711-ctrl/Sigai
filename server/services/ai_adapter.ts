@@ -62,7 +62,6 @@ const verifyDataIntegrity = (history: any[], newMessage: string): boolean => {
   // Jika konteks mengandung indikasi trading tapi tidak ada angka valid
   const hasTradingKeywords = /buy|sell|signal|entry|setup|xauusd|gold/.test(fullContext);
   if (hasTradingKeywords) {
-    // Regex mencari angka desimal harga tipikal
     const pricePattern = /\d{1,5}\.\d{1,5}/;
     const hasPriceData = pricePattern.test(fullContext);
     
@@ -83,9 +82,17 @@ const buildGeminiPayload = (history: any[], newMessage: string, images: string[]
     return { role, parts: [{ text: msg.content }] };
   });
 
-  // Proteksi Hallucination Prevention: Sisipkan instruksi paksa pada pesan terbaru
-  const hallucinationGuard = "\n\n[SYSTEM_PROTECTION]: Wajib sertakan 'Evidence Source' (Sumber Bukti) untuk setiap angka harga atau level teknikal yang disebutkan. Dilarang keras merekayasa angka jika data tidak tersedia dalam context.";
-  const userParts: Part[] = [{ text: newMessage + hallucinationGuard }];
+  // Instruksi Auditor Senior & Evidence Guard
+  const auditorInstruction = `
+[AUDITOR_PROTOCOL]: Bertindaklah sebagai Senior Trading Auditor (Pessimistic).
+Tugas utamamu adalah mencari alasan untuk me-REJECT sinyal. 
+- Cari kontradiksi antar indikator/agen.
+- Periksa kesesuaian data harga (OHLC) secara mikroskopis.
+- Jika evidence tidak sinkron atau angka tidak logis, wajib jawab 'REJECT' dengan alasan teknis tajam.
+- Gunakan 'Evidence Source' sebagai landasan tunggal. Dilarang berhalusinasi.
+- Output: Clean, Sharp, Professional, No Small Talk.`;
+
+  const userParts: Part[] = [{ text: newMessage + auditorInstruction }];
   
   if (images && images.length > 0) {
     for (const imageBase64 of images) {
@@ -114,10 +121,9 @@ class GoogleGeminiProvider implements AIProvider {
 
   async generateContent(history: any[], newMessage: string, images: string[] | null, temperature: number, modelName: string): Promise<any> {
     try {
-      // 1. Verifikasi Integritas Data sebelum pemanggilan API
       if (!verifyDataIntegrity(history, newMessage)) {
         return { 
-          response: "⚠️ **CONTEXT_SYNC_FAILED**: Data pasar real-time atau bukti harga tidak ditemukan dalam input. Sistem menolak pemrosesan untuk mencegah halusinasi.",
+          response: "⚠️ **REJECT: CONTEXT_SYNC_FAILED**. Bukti harga (OHLC) tidak ditemukan. Auditor menolak verifikasi tanpa data nyata.",
           provider_status: "INTEGRITY_REJECTED"
         };
       }
@@ -125,7 +131,7 @@ class GoogleGeminiProvider implements AIProvider {
       const model = this.genAI.getGenerativeModel({ 
         model: modelName, 
         tools: [tradeSignalTool],
-        systemInstruction: "Kamu adalah mesin eksekusi trading yang hanya berbicara berdasarkan data nyata. Jangan pernah memberikan saran tanpa bukti angka. Jika data harga 0 atau tidak ada, katakan 'DATA TIDAK TERSEDIA'."
+        systemInstruction: "Kamu adalah Senior Audit Analyst. Gunakan 'Evidence-Based Reasoning'. Jika data harga kontradiktif atau tidak sinkron, keluarkan 'REJECT'. Dilarang memberikan data palsu/dummy."
       });
       
       const contents = buildGeminiPayload(history, newMessage, images);
@@ -133,7 +139,7 @@ class GoogleGeminiProvider implements AIProvider {
       const result = await model.generateContentStream({ 
         contents: contents,
         generationConfig: {
-          temperature: temperature || 0.1, // Rendah untuk presisi
+          temperature: 0.1, // Minimal randomness untuk akurasi audit
           topP: 0.8,
         }
       });
@@ -185,7 +191,7 @@ if (process.env.GEMINI_API_KEY) {
 } else {
   class FallbackProvider implements AIProvider {
     async generateContent(history: any[], newMessage: string, images: string[] | null, temperature: number, model: string): Promise<any> {
-      return Promise.resolve({ response: "API Key AI tidak dikonfigurasi. Sistem dalam mode OFFLINE." });
+      return Promise.resolve({ response: "REJECT: AI_OFFLINE. API Key tidak dikonfigurasi." });
     }
   }
   defaultProvider = new FallbackProvider();

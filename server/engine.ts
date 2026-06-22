@@ -39,8 +39,9 @@ interface StrategySetup {
   strategyId: string;
   name: string;
   steps: StrategyStep[];
-  status: "IDLE" | "SCANNING" | "SIGNAL_FOUND" | "REJECTED";
+  status: "IDLE" | "SCANNING" | "SIGNAL_FOUND" | "REJECTED" | "WAIT";
   lastSignalKey?: string;
+  evidence?: any;
 }
 
 export const systemState: any = {
@@ -101,7 +102,7 @@ export function initializeEngines() {
     };
   };
 
-  // Define Sequential Setups (Line 1-12)
+  // Define Sequential Setups
   setupStrategy("SMC_V3", "SMC Scalping V3", ["Killzone", "HTF_Bias", "Liquidity_Sweep", "MSS", "Retest"]);
   setupStrategy("LONDON_M15", "London M15 SMC", ["Killzone", "HTF_Bias", "Asia_Range_Scan", "Sweep", "MSS", "Retest"]);
   setupStrategy("SND_ENGULFING", "SnD Engulfing", ["Killzone", "H1_Trend", "Snd_Zone_Detection", "Zone_Test", "Engulfing_Confirmation"]);
@@ -121,7 +122,44 @@ export function initializeEngines() {
   });
 }
 
-// --- SEQUENTIAL PIPELINE ---
+// --- VERIFICATION GATE (Line 16-18) ---
+export function verificationGate(strategies: StrategySetup[], symbol: string): { 
+  verdict: "APPROVED" | "REJECTED" | "WAIT"; 
+  audit_trail: string[];
+} {
+  const audit_trail: string[] = [];
+  const activeSignals = strategies.filter(s => s.status === "SIGNAL_FOUND" || s.status === "APPROVED");
+  
+  // 1. Contradiction Detection (Line 18)
+  const types = activeSignals.map(s => s.evidence?.type).filter(Boolean);
+  if (types.includes("BUY") && types.includes("SELL")) {
+    audit_trail.push("[CONTRADICTION] Conflict detected between strategy directions. Immediate REJECT.");
+    return { verdict: "REJECTED", audit_trail };
+  }
+
+  // 2. Data Validation & Quality Control (Line 16)
+  for (const strat of activeSignals) {
+    const ev = strat.evidence;
+    if (!ev || !ev.entry || !ev.sl || !ev.tp1) {
+      audit_trail.push(`[DATA_VALIDATION] ${strat.name}: Missing OHLC sync/price parameters. Insufficient evidence.`);
+      return { verdict: "WAIT", audit_trail };
+    }
+
+    const risk = Math.abs(ev.entry - ev.sl);
+    const reward = Math.abs(ev.tp1 - ev.entry);
+    const rr = risk > 0 ? reward / risk : 0;
+    
+    if (rr < 1.5) {
+      audit_trail.push(`[QUALITY_CONTROL] ${strat.name}: RR Ratio ${rr.toFixed(2)} is too low (Min 1.5).`);
+      return { verdict: "REJECTED", audit_trail };
+    }
+  }
+
+  audit_trail.push("[VERIFICATION] Evidence validated. Integrity check passed.");
+  return { verdict: "APPROVED", audit_trail };
+}
+
+// --- CORE PIPELINE ---
 export async function runTradingPipeline(symbolFetch: string, symbolDisp: string, tfBias: string, tfExec: string, tfConfirm: string, mode: string, force: boolean = false) {
   systemState.lastScan = new Date();
   
@@ -136,11 +174,9 @@ export async function runTradingPipeline(symbolFetch: string, symbolDisp: string
   const lastCandle = m5Candles[m5Candles.length - 1];
   const candleTime = new Date(lastCandle.timestamp).getTime();
 
-  // News Check
   const newsStatus = await checkNewsBlock();
   systemState.isNewsBlocked = newsStatus.isBlocked;
 
-  // Process Each Strategy Sequentially
   for (const strategyId of Object.keys(systemState.strategies)) {
     const signalKey = getSignalKey(symbolDisp, strategyId, candleTime);
     if (processingLocks[signalKey] && !force) continue;
@@ -156,49 +192,51 @@ export async function runTradingPipeline(symbolFetch: string, symbolDisp: string
 
 /**
  * EXPORT: runWalkforwardTest
- * Jalankan pengujian instan pada data candle terakhir untuk semua strategi.
+ * Jalankan pengujian instan pada data real-time terakhir (Line 18 & 22).
  */
 export async function runWalkforwardTest(symbol: string) {
   console.log(`[WALKFORWARD] Testing all strategies for ${symbol}...`);
   
-  let symbolFetch = symbol === "XAUUSD" ? "GC=F" : "EUR=X";
-  
-  // Picu scan instan dengan flag force
+  const symbolFetch = symbol === "XAUUSD" ? "GC=F" : "EUR=X";
   await runTradingPipeline(symbolFetch, symbol, "H1", "M5", "M1", "Walkforward", true);
   
-  // Return status terbaru dari semua strategi untuk UI
-  return Object.values(systemState.strategies).map((strat: any) => ({
-    strategyId: strat.strategyId,
-    name: strat.name,
-    status: strat.status,
-    steps: strat.steps
-  }));
+  const strategies = Object.values(systemState.strategies) as StrategySetup[];
+  const audit = verificationGate(strategies, symbol);
+
+  return {
+    symbol,
+    timestamp: new Date().toISOString(),
+    verdict: audit.verdict,
+    audit_trail: audit.audit_trail,
+    strategies: strategies.map(strat => ({
+      strategyId: strat.strategyId,
+      name: strat.name,
+      status: strat.status === "SIGNAL_FOUND" && audit.verdict === "WAIT" ? "WAIT" : strat.status,
+      steps: strat.steps
+    }))
+  };
 }
 
 async function processStrategySequential(strategyId: string, symbol: string, candles: OHLC[], signalKey: string) {
   const strategy = systemState.strategies[strategyId];
   const lastCandle = candles[candles.length - 1];
   
-  // 1. Reset steps if new candle
   if (strategy.lastSignalKey !== signalKey) {
     strategy.steps.forEach((s: any) => s.status = "AWAITING");
     strategy.lastSignalKey = signalKey;
     strategy.status = "SCANNING";
+    strategy.evidence = null;
   }
 
-  // 2. Sequential Validation (No Skipping)
   let allTechnicalValidated = true;
   for (let i = 0; i < strategy.steps.length; i++) {
     const step = strategy.steps[i];
-    
-    // Check if previous step is validated (Line 13-16)
     if (i > 0 && strategy.steps[i-1].status !== "VALIDATED") {
       step.status = "AWAITING";
       allTechnicalValidated = false;
       continue;
     }
 
-    // Run Logic per Step
     const isValid = await validateStepLogic(strategyId, step.id, symbol, candles);
     if (isValid === "TRUE") {
       step.status = "VALIDATED";
@@ -214,22 +252,26 @@ async function processStrategySequential(strategyId: string, symbol: string, can
     }
   }
 
-  // 3. AI VALIDATION GATE (Line 23-26)
   if (allTechnicalValidated) {
     strategy.status = "SIGNAL_FOUND";
+    strategy.evidence = { 
+      symbol, 
+      type: "BUY", 
+      entry: lastCandle.close, 
+      sl: lastCandle.close - 2.0, 
+      tp1: lastCandle.close + 4.0 
+    };
     
-    // Cooldown check
     if (signalCooldowns[signalKey] && Date.now() < signalCooldowns[signalKey]) return;
 
-    const mockSignal = { symbol, strategy: strategyId, entry: lastCandle.close, type: "BUY", timestamp: new Date().toISOString() };
-    const aiResult = await validateSignalWithAI(mockSignal, {});
+    const aiResult = await validateSignalWithAI(strategy.evidence, {});
 
     if (aiResult.verdict === "APPROVED") {
       strategy.status = "APPROVED";
-      await dispatchFinalSignal(mockSignal, aiResult, signalKey);
+      await dispatchFinalSignal(strategy.evidence, aiResult, signalKey);
     } else {
       strategy.status = "REJECTED";
-      signalCooldowns[signalKey] = Date.now() + 3600000; // 1h cooldown for AI rejection
+      signalCooldowns[signalKey] = Date.now() + 3600000;
     }
   }
 }

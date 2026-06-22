@@ -10,6 +10,8 @@ import {
   Target,
   ChevronRight,
   Database,
+  Search,
+  ClipboardCheck,
 } from "lucide-react";
 import { Badge, Card, cn } from "./ui";
 import { apiFetch } from "../lib/api";
@@ -33,44 +35,106 @@ const getStepColor = (status: string) => {
 
 export function Dashboard() {
   const [status, setStatus] = useState<any>(null);
+  const [isTesting, setIsTesting] = useState(false);
+  const [testResult, setTestResult] = useState<any>(null);
+
+  const loadStatus = async () => {
+    try {
+      const { data } = await apiFetch("/system/status");
+      if (data) setStatus(data);
+    } catch (err) {}
+  };
 
   useEffect(() => {
-    const loadStatus = async () => {
-      try {
-        const { data } = await apiFetch("/system/status");
-        if (data) setStatus(data);
-      } catch (err) {}
-    };
     loadStatus();
     const iv = setInterval(loadStatus, 3000);
     return () => clearInterval(iv);
   }, []);
+
+  const triggerWalkforward = async () => {
+    setIsTesting(true);
+    setTestResult(null);
+    try {
+      const res = await apiFetch("/walkforward/test", {
+        method: "POST",
+        body: JSON.stringify({ symbol: "XAUUSD" }),
+      });
+      if (res?.data) setTestResult(res.data);
+    } catch (err) {
+      console.error("Walkforward Error:", err);
+    } finally {
+      setIsTesting(false);
+    }
+  };
 
   const latest = status?.signalsHistory?.[0];
   const strategies = status?.strategies ? Object.entries(status.strategies) : [];
 
   return (
     <div className="flex flex-col gap-5 flex-1 w-full animate-in fade-in duration-300">
-      <div className="flex flex-wrap gap-2 items-center bg-brand-bg-sec/50 p-2.5 rounded-xl border border-brand-border shadow-sm">
-        <Badge
-          variant={status?.autotrade?.tradeMode === "AUTO" ? "success" : "warning"}
-          className="font-mono text-[9px] px-1.5 py-0.5 rounded-md uppercase"
+      <div className="flex flex-wrap gap-2 items-center justify-between bg-brand-bg-sec/50 p-2.5 rounded-xl border border-brand-border shadow-sm">
+        <div className="flex gap-2">
+          <Badge
+            variant={status?.autotrade?.tradeMode === "AUTO" ? "success" : "warning"}
+            className="font-mono text-[9px] px-1.5 py-0.5 rounded-md uppercase"
+          >
+            {status?.autotrade?.tradeMode || "MANUAL"} MODE
+          </Badge>
+          <Badge
+            variant={status?.autotrade?.executionProvider === "NONE" ? "warning" : "success"}
+            className="font-mono text-[9px] px-1.5 py-0.5 rounded-md uppercase"
+          >
+            EXEC: {status?.autotrade?.executionProvider || "NONE"}
+          </Badge>
+          <Badge
+            variant={status?.robotStatus === "ON" ? "success" : "danger"}
+            className="font-mono text-[9px] px-1.5 py-0.5 rounded-md uppercase"
+          >
+            SYS: {status?.robotStatus || "OFF"}
+          </Badge>
+        </div>
+        
+        <button
+          onClick={triggerWalkforward}
+          disabled={isTesting}
+          className="flex items-center gap-2 px-3 py-1.5 bg-brand-accent/10 border border-brand-accent/40 rounded-lg text-[10px] font-bold text-brand-accent uppercase tracking-widest hover:bg-brand-accent/20 transition-all disabled:opacity-50"
         >
-          {status?.autotrade?.tradeMode || "MANUAL"} MODE
-        </Badge>
-        <Badge
-          variant={status?.autotrade?.executionProvider === "NONE" ? "warning" : "success"}
-          className="font-mono text-[9px] px-1.5 py-0.5 rounded-md uppercase"
-        >
-          EXEC: {status?.autotrade?.executionProvider || "NONE"}
-        </Badge>
-        <Badge
-          variant={status?.robotStatus === "ON" ? "success" : "danger"}
-          className="font-mono text-[9px] px-1.5 py-0.5 rounded-md uppercase"
-        >
-          SYS: {status?.robotStatus || "OFF"}
-        </Badge>
+          {isTesting ? <Activity className="w-3 h-3 animate-spin" /> : <ShieldCheck className="w-3 h-3" />}
+          {isTesting ? "Auditing Systems..." : "Trigger Walkforward Test"}
+        </button>
       </div>
+
+      {testResult && (
+        <Card className="p-4 border-brand-info/40 bg-brand-info/5 animate-in slide-in-from-top duration-500">
+          <div className="flex items-center justify-between mb-3">
+            <h4 className="text-[10px] font-bold uppercase tracking-[0.2em] text-brand-info flex items-center gap-2">
+              <ClipboardCheck className="w-4 h-4" /> Live Audit Report: {testResult.symbol}
+            </h4>
+            <Badge variant={testResult.status === "APPROVED" ? "success" : testResult.status === "WAIT" ? "warning" : "danger"}>
+              {testResult.status}
+            </Badge>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <div className="text-[9px] font-bold text-brand-text-sec uppercase">Evidence Matrix</div>
+              <div className="bg-black/40 p-3 rounded-lg border border-brand-border/40 font-mono text-[10px] space-y-1 text-brand-text-sec">
+                {testResult.evidence ? Object.entries(testResult.evidence).map(([k, v]: [string, any]) => (
+                  <div key={k} className="flex justify-between">
+                    <span>{k.toUpperCase()}:</span>
+                    <span className="text-brand-text font-bold">{v || "N/A"}</span>
+                  </div>
+                )) : <div>NO_EVIDENCE_LOGGED</div>}
+              </div>
+            </div>
+            <div className="space-y-2">
+              <div className="text-[9px] font-bold text-brand-text-sec uppercase">Audit Trail & Reasoning</div>
+              <p className="text-[11px] leading-relaxed text-brand-text italic opacity-90">
+                {testResult.reason || "Sistem melakukan pemindaian menyeluruh. Evidence tidak memadai untuk keputusan instan."}
+              </p>
+            </div>
+          </div>
+        </Card>
+      )}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <Card className={cn("h-20 flex flex-col justify-between p-3.5 shadow-sm transition-all", status?.engineMode === "NEWS" ? "border-brand-warning/40 bg-brand-warning/5" : "border-brand-success/20 hover:border-brand-success/40")}>
@@ -101,10 +165,19 @@ export function Dashboard() {
           <div className="text-brand-text text-sm font-bold font-mono truncate tracking-wide">
             {status?.prices?.EURUSD ? status.prices.EURUSD.toFixed(5) : "0.00000"}
           </div>
-        </div>
+        </Card>
+
+        <Card className="h-20 flex flex-col justify-between p-3.5 border-brand-border/60 shadow-sm transition-all hover:border-brand-accent/40 group">
+          <div className="flex justify-between items-center text-brand-text-sec">
+            <div className="text-[9px] font-bold uppercase tracking-widest flex items-center gap-1.5 opacity-90">Account</div>
+            <Search className="w-3.5 h-3.5 text-brand-accent opacity-70" />
+          </div>
+          <div className="text-brand-text text-sm font-bold font-mono truncate tracking-wide uppercase">
+            {status?.robotStatus === "ON" ? "CONNECTED" : "DISCONNECTED"}
+          </div>
+        </Card>
       </div>
 
-      {/* Market Intelligence Section */}
       <div className="mt-2 flex flex-col gap-3">
         <h3 className="text-sm font-bold text-brand-text flex items-center gap-2 uppercase tracking-widest">
           <Target className="w-4 h-4 text-brand-accent" /> Market Intelligence Matrix
@@ -115,7 +188,7 @@ export function Dashboard() {
               <Card key={id} className="p-4 bg-brand-bg-sec/40 border-brand-border/60">
                 <div className="flex justify-between items-center mb-4">
                   <div className="text-[10px] font-bold text-brand-accent uppercase tracking-tighter">{strat.name}</div>
-                  <Badge className="text-[8px] font-mono py-0">{strat.status}</Badge>
+                  <Badge className="text-[8px] font-mono py-0 uppercase">{strat.status}</Badge>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   {strat.setupState && Object.entries(strat.setupState).map(([stepKey, stepStatus]: [string, any], idx) => (
@@ -140,7 +213,7 @@ export function Dashboard() {
       </div>
 
       <div className="mt-2 flex flex-col gap-3">
-        <h3 className="text-sm font-semibold text-brand-text flex items-center gap-2">
+        <h3 className="text-sm font-semibold text-brand-text flex items-center gap-2 uppercase tracking-widest">
           <Activity className="w-4 h-4 text-brand-info" /> Latest Execution Trace
         </h3>
 
