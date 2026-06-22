@@ -3,7 +3,7 @@ import React, { useEffect, useState } from "react";
 import {
   Activity,
   Zap,
-  AlertTriangle,
+  ShieldAlert,
   ActivitySquare,
   BrainCircuit,
   ShieldCheck,
@@ -12,6 +12,8 @@ import {
   Database,
   Search,
   ClipboardCheck,
+  Layers,
+  BarChart3,
 } from "lucide-react";
 import { Badge, Card, cn } from "./ui";
 import { apiFetch } from "../lib/api";
@@ -105,32 +107,58 @@ export function Dashboard() {
       </div>
 
       {testResult && (
-        <Card className="p-4 border-brand-info/40 bg-brand-info/5 animate-in slide-in-from-top duration-500">
-          <div className="flex items-center justify-between mb-3">
-            <h4 className="text-[10px] font-bold uppercase tracking-[0.2em] text-brand-info flex items-center gap-2">
-              <ClipboardCheck className="w-4 h-4" /> Live Audit Report: {testResult.symbol}
+        <Card className={cn(
+          "p-4 border shadow-md animate-in slide-in-from-top duration-500",
+          testResult.status === "APPROVED" ? "border-brand-success/40 bg-brand-success/5" : 
+          testResult.status === "WAIT" ? "border-brand-warning/40 bg-brand-warning/5" : 
+          "border-brand-danger/40 bg-brand-danger/5"
+        )}>
+          <div className="flex items-center justify-between mb-4 border-b border-brand-border/30 pb-3">
+            <h4 className="text-[10px] font-bold uppercase tracking-[0.2em] text-brand-text flex items-center gap-2">
+              <ClipboardCheck className="w-4 h-4 text-brand-accent" /> 
+              Real-Time Audit: {testResult.symbol}
             </h4>
-            <Badge variant={testResult.status === "APPROVED" ? "success" : testResult.status === "WAIT" ? "warning" : "danger"}>
-              {testResult.status}
-            </Badge>
+            <div className="flex items-center gap-2">
+              <span className="text-[9px] font-mono opacity-60">VERDICT:</span>
+              <Badge variant={testResult.status === "APPROVED" ? "success" : testResult.status === "WAIT" ? "warning" : "danger"} className="flex items-center gap-1 px-2">
+                {testResult.status === "APPROVED" ? <ShieldCheck className="w-3 h-3" /> : <ShieldAlert className="w-3 h-3" />}
+                {testResult.status}
+              </Badge>
+            </div>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <div className="text-[9px] font-bold text-brand-text-sec uppercase">Evidence Matrix</div>
-              <div className="bg-black/40 p-3 rounded-lg border border-brand-border/40 font-mono text-[10px] space-y-1 text-brand-text-sec">
+          
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="space-y-2 col-span-1">
+              <div className="text-[9px] font-bold text-brand-text-sec uppercase flex items-center gap-1.5">
+                <BarChart3 className="w-3 h-3" /> Evidence Found
+              </div>
+              <div className="bg-black/40 p-3 rounded-lg border border-brand-border/40 font-mono text-[10px] space-y-1.5 text-brand-text-sec">
                 {testResult.evidence ? Object.entries(testResult.evidence).map(([k, v]: [string, any]) => (
-                  <div key={k} className="flex justify-between">
-                    <span>{k.toUpperCase()}:</span>
-                    <span className="text-brand-text font-bold">{v || "N/A"}</span>
+                  <div key={k} className="flex justify-between border-b border-brand-border/10 pb-1">
+                    <span className="opacity-70">{k.replace(/_/g, " ").toUpperCase()}:</span>
+                    <span className="text-brand-text font-bold">
+                      {typeof v === 'number' ? v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 5 }) : v}
+                    </span>
                   </div>
-                )) : <div>NO_EVIDENCE_LOGGED</div>}
+                )) : <div className="text-brand-danger italic">NO_LIVE_DATA_FEED</div>}
               </div>
             </div>
-            <div className="space-y-2">
-              <div className="text-[9px] font-bold text-brand-text-sec uppercase">Audit Trail & Reasoning</div>
-              <p className="text-[11px] leading-relaxed text-brand-text italic opacity-90">
-                {testResult.reason || "Sistem melakukan pemindaian menyeluruh. Evidence tidak memadai untuk keputusan instan."}
-              </p>
+            
+            <div className="space-y-2 col-span-2">
+              <div className="text-[9px] font-bold text-brand-text-sec uppercase flex items-center gap-1.5">
+                <Layers className="w-3 h-3" /> Audit Trace & Deterministic Reasoning
+              </div>
+              <div className="bg-black/20 p-3 rounded-lg border border-brand-border/20 h-full">
+                <p className="text-[11px] leading-relaxed text-brand-text font-medium opacity-90">
+                  {testResult.reason || "Context acquisition in progress. Waiting for valid OHLC synchronization."}
+                </p>
+                <div className="mt-4 pt-3 border-t border-brand-border/30 flex justify-between items-center text-[9px] font-mono text-brand-text-sec">
+                  <span>Audit Trail Ref: {testResult.id || Date.now()}</span>
+                  <span className="text-brand-accent">
+                    Verdict reached based on {testResult.evidence ? Object.keys(testResult.evidence).length : 0} evidence points
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
         </Card>
@@ -143,7 +171,7 @@ export function Dashboard() {
             <ActivitySquare className="w-3.5 h-3.5 opacity-70 text-brand-accent" />
           </div>
           <div className={cn("text-sm font-bold font-mono truncate tracking-wide", status?.engineMode === "NEWS" ? "text-brand-warning" : "text-brand-success")}>
-            {status?.engineMode || "STANDARD"}
+            {status?.engineMode || "ANALYZING..."}
           </div>
         </Card>
 
@@ -153,7 +181,7 @@ export function Dashboard() {
             <Activity className="w-3.5 h-3.5 text-brand-accent opacity-70" />
           </div>
           <div className="text-brand-text text-sm font-bold font-mono truncate tracking-wide">
-            {status?.prices?.XAUUSD ? status.prices.XAUUSD.toFixed(2) : "0.00"}
+            {status?.prices?.XAUUSD ? status.prices.XAUUSD.toFixed(2) : "SYNCING..."}
           </div>
         </Card>
 
@@ -163,7 +191,7 @@ export function Dashboard() {
             <Activity className="w-3.5 h-3.5 text-brand-info opacity-70" />
           </div>
           <div className="text-brand-text text-sm font-bold font-mono truncate tracking-wide">
-            {status?.prices?.EURUSD ? status.prices.EURUSD.toFixed(5) : "0.00000"}
+            {status?.prices?.EURUSD ? status.prices.EURUSD.toFixed(5) : "SYNCING..."}
           </div>
         </Card>
 
@@ -173,7 +201,7 @@ export function Dashboard() {
             <Search className="w-3.5 h-3.5 text-brand-accent opacity-70" />
           </div>
           <div className="text-brand-text text-sm font-bold font-mono truncate tracking-wide uppercase">
-            {status?.robotStatus === "ON" ? "CONNECTED" : "DISCONNECTED"}
+            {status?.robotStatus === "ON" ? "CONNECTED" : "OFFLINE"}
           </div>
         </Card>
       </div>
@@ -206,7 +234,7 @@ export function Dashboard() {
             ))
           ) : (
             <div className="col-span-full p-6 text-center text-[10px] font-mono text-brand-text-sec border border-dashed border-brand-border rounded-lg">
-              SYNCING STRATEGY ENGINE...
+              INITIALIZING STRATEGY PIPELINE...
             </div>
           )}
         </div>
@@ -236,12 +264,13 @@ export function Dashboard() {
                   </span>
                 </div>
                 <div className="text-[10px] md:text-xs text-brand-text-sec font-medium flex items-center gap-1.5 mt-0.5">
-                  <BrainCircuit className="w-3.5 h-3.5 text-brand-accent" /> AI Verified &bull; {new Date(latest.timestamp).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })} WITA
+                  <BrainCircuit className="w-3.5 h-3.5 text-brand-accent" /> {latest.ai_verdict === "APPROVED" ? "Verified Evidence" : "Audit Pending"} &bull; {new Date(latest.timestamp).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })} WITA
                 </div>
               </div>
 
               <div className="flex flex-col items-end gap-1">
-                <Badge variant={latest.ai_verdict === "APPROVED" ? "accent" : "warning"} className="font-semibold text-[10px] px-2 py-0.5 rounded">
+                <Badge variant={latest.ai_verdict === "APPROVED" ? "accent" : "warning"} className="font-semibold text-[10px] px-2 py-0.5 rounded flex items-center gap-1">
+                  {latest.ai_verdict === "APPROVED" ? <ShieldCheck className="w-3 h-3" /> : <ShieldAlert className="w-3 h-3" />}
                   {latest.ai_verdict}
                 </Badge>
                 {latest.currentPips !== undefined && (
@@ -274,7 +303,7 @@ export function Dashboard() {
             <div className="flex justify-between items-center mt-4 pt-3 border-t border-brand-border/30 w-full">
               <div className="text-[9px] font-mono text-brand-text-sec flex items-center gap-1.5 truncate">
                 <Database className="w-3 h-3" />
-                IDEMPOTENCY_KEY: {latest.id || "UNKNOWN_ID"}
+                IDEMPOTENCY_KEY: {latest.id || "NULL_ID"}
               </div>
               <div className="text-[10px] uppercase font-bold text-brand-text-sec bg-brand-bg px-2.5 py-1 rounded border border-brand-border">
                 AI CONFIDENCE: <span className="text-brand-success ml-1">{latest.confidence}%</span>
@@ -286,7 +315,7 @@ export function Dashboard() {
             <div className="flex flex-col items-center text-brand-text-sec">
               <ShieldCheck className="w-5 h-5 mb-2 opacity-50 text-brand-accent animate-pulse" />
               <div className="text-[10px] font-bold uppercase tracking-[0.2em] mb-1">Execution Pipeline Idle</div>
-              <div className="text-[9px] font-mono opacity-60">Scanning for high-probability setups...</div>
+              <div className="text-[9px] font-mono opacity-60">Monitoring real-time market liquidity...</div>
             </div>
           </Card>
         )}

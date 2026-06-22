@@ -82,22 +82,21 @@ const buildGeminiPayload = (history: any[], newMessage: string, images: string[]
     return { role, parts: [{ text: msg.content }] };
   });
 
-  // Instruksi Auditor Senior & Confidence Protocol
+  // Instruksi Auditor Senior & Critical Audit Protocol
   const auditorInstruction = `
-[AUDITOR_PROTOCOL]: Bertindaklah sebagai Senior Trading Auditor (Pessimistic).
-Tugas utamamu adalah mencari alasan untuk me-REJECT sinyal. 
-- Cari kontradiksi antar indikator/agen.
-- Periksa kesesuaian data harga (OHLC) secara mikroskopis.
-- Jika evidence tidak sinkron atau angka tidak logis, wajib jawab 'REJECT' dengan alasan teknis tajam.
-- Gunakan 'Evidence Source' sebagai landasan tunggal. Dilarang berhalusinasi.
+[CRITICAL_AUDIT_PROTOCOL]: Bertindaklah sebagai Senior Trading Auditor yang bertugas mencari KESALAHAN pada analisis teknikal.
+- Cari klaim yang tidak didukung data nyata (Contoh: Klaim Trend Bullish tanpa Higher High yang jelas di data OHLC).
+- Jika terdeteksi klaim tanpa bukti (Data Hallucination), wajib berikan verdict: 'REJECTED: HALLUCINATION_DETECTED'.
+- Audit kesesuaian Risk:Reward secara matematis. Jika RR < 1:1.5, wajib 'REJECTED: BAD_RR_RATIO'.
+- Cari kontradiksi antar indikator atau timeframe.
+- Jawaban harus rapi, bersih, terstruktur, dan hanya berisi FAKTA.
 
-[CONFIDENCE_FILTER]: Wajib sertakan skor 'Confidence: [0-100]' dalam jawabanmu.
-[EVIDENCE_LEVEL]: Wajib tentukan 'Evidence Level: [HIGH|MEDIUM|LOW]' berdasarkan kualitas data real-time.
-- HIGH: Data OHLC lengkap + Konfirmasi Volume/Structure.
-- MEDIUM: Data OHLC ada tapi minim konfirmasi.
-- LOW: Data terpotong, tidak sinkron, atau terindikasi dummy.
+[CONFIDENCE_FILTER]: Wajib sertakan skor 'Confidence: [0-100]'.
+[EVIDENCE_LEVEL]: Wajib tentukan 'Evidence Level: [HIGH|MEDIUM|LOW]' berdasarkan ketersediaan bukti numerik.
+- HIGH: Data OHLC lengkap + Bukti Structure/Volume sinkron.
+- LOW: Klaim tanpa koordinat harga atau volume yang mendukung.
 
-Output: Clean, Sharp, Professional, No Small Talk.`;
+Output format: [VERDICT], [REASON], [CONFIDENCE], [EVIDENCE_LEVEL]. No small talk.`;
 
   const userParts: Part[] = [{ text: newMessage + auditorInstruction }];
   
@@ -130,7 +129,7 @@ class GoogleGeminiProvider implements AIProvider {
     try {
       if (!verifyDataIntegrity(history, newMessage)) {
         return { 
-          response: "⚠️ **REJECT: CONTEXT_SYNC_FAILED**. Bukti harga (OHLC) tidak ditemukan. Auditor menolak verifikasi tanpa data nyata.",
+          response: "⚠️ **REJECTED: CONTEXT_SYNC_FAILED**. Bukti harga (OHLC) tidak ditemukan. Auditor menolak verifikasi tanpa data nyata.",
           provider_status: "INTEGRITY_REJECTED"
         };
       }
@@ -138,7 +137,7 @@ class GoogleGeminiProvider implements AIProvider {
       const model = this.genAI.getGenerativeModel({ 
         model: modelName, 
         tools: [tradeSignalTool],
-        systemInstruction: "Kamu adalah Senior Audit Analyst. Gunakan 'Evidence-Based Reasoning'. Jika data harga kontradiktif atau tidak sinkron, keluarkan 'REJECT'. Wajib menyertakan Confidence Score dan Evidence Level."
+        systemInstruction: "Kamu adalah Senior Audit Analyst (Pessimistic). Gunakan 'Evidence-Based Reasoning'. Fokus utamamu adalah mendeteksi halusinasi analisis dan kesalahan teknikal. Jika data tidak sinkron atau klaim tidak didukung angka, keluarkan 'REJECTED: HALLUCINATION_DETECTED'. Wajib audit Risk:Reward."
       });
       
       const contents = buildGeminiPayload(history, newMessage, images);
@@ -146,7 +145,7 @@ class GoogleGeminiProvider implements AIProvider {
       const result = await model.generateContentStream({ 
         contents: contents,
         generationConfig: {
-          temperature: 0.1, // Minimal randomness untuk akurasi audit
+          temperature: 0.1, 
           topP: 0.8,
         }
       });
@@ -171,7 +170,7 @@ class GoogleGeminiProvider implements AIProvider {
       if (toolCalls.length > 0) {
         if (confidenceScore < 80) {
            return { 
-             response: `⚠️ **WAIT: INSUFFICIENT_CONFIDENCE (${confidenceScore}%)**. Auditor menunda eksekusi karena tingkat kepercayaan di bawah threshold 80%. Hubungi verifikasi manual.`,
+             response: `⚠️ **REJECTED: INSUFFICIENT_CONFIDENCE (${confidenceScore}%)**. Auditor menolak eksekusi otomatis karena tingkat kepercayaan rendah atau data tidak sinkron.`,
              success: false,
              provider_status: "LOW_CONFIDENCE"
            };
@@ -179,9 +178,13 @@ class GoogleGeminiProvider implements AIProvider {
         return { tool_calls: toolCalls, success: true };
       }
 
-      // Final Output Refinement for Text responses
-      if (confidenceScore < 80 && !aggregatedResponse.includes("REJECT")) {
-        aggregatedResponse = `⚠️ **WAIT: NEED_MORE_CONFIRMATION**. \n\n${aggregatedResponse}`;
+      // Hallucination & Consistency Check
+      if (aggregatedResponse.toUpperCase().includes("REJECTED")) {
+          return { response: aggregatedResponse, success: false, confidence: confidenceScore };
+      }
+
+      if (confidenceScore < 80) {
+        aggregatedResponse = `⚠️ **WAIT: AUDIT_INCOMPLETE**. \n\n${aggregatedResponse}`;
       }
 
       return { response: aggregatedResponse, success: true, confidence: confidenceScore };
@@ -214,7 +217,7 @@ if (process.env.GEMINI_API_KEY) {
 } else {
   class FallbackProvider implements AIProvider {
     async generateContent(history: any[], newMessage: string, images: string[] | null, temperature: number, model: string): Promise<any> {
-      return Promise.resolve({ response: "REJECT: AI_OFFLINE. API Key tidak dikonfigurasi." });
+      return Promise.resolve({ response: "REJECTED: AI_OFFLINE. API Key tidak dikonfigurasi." });
     }
   }
   defaultProvider = new FallbackProvider();
