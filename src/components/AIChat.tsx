@@ -62,6 +62,76 @@ function loadHistory(): ChatMessage[] {
   }
 }
 
+/**
+ * Classify error into user-friendly message
+ */
+function classifyError(err: any): { message: string; severity: "error" | "warning" | "info" } {
+  const msg = (err?.message || "").toLowerCase();
+  const status = err?.status || err?.response?.status;
+
+  // Network errors (no response from server)
+  if (msg.includes("network") || msg.includes("fetch") || msg.includes("econnrefused") || msg.includes("enotfound")) {
+    return {
+      message: "Tidak dapat terhubung ke server. Pastikan backend berjalan dan MCP_SERVER_URL benar.",
+      severity: "error",
+    };
+  }
+
+  // Auth errors
+  if (status === 401 || status === 403 || msg.includes("unauthorized") || msg.includes("admin_secret")) {
+    return {
+      message: "Otentikasi gagal. Periksa admin_secret di environment.",
+      severity: "warning",
+    };
+  }
+
+  // Server errors
+  if (status === 500 || msg.includes("internal server error") || msg.includes("kesalahan internal")) {
+    return {
+      message: "Server AI mengalami error internal. Coba beberapa saat lagi.",
+      severity: "error",
+    };
+  }
+
+  // API key errors
+  if (msg.includes("api key") || msg.includes("api_key") || msg.includes("belum ada api key")) {
+    return {
+      message: "API Key AI belum dikonfigurasi. Set GEMINI_API_KEY atau provider lain di environment.",
+      severity: "warning",
+    };
+  }
+
+  // Provider exhausted
+  if (msg.includes("fallback") || msg.includes("exhausted") || msg.includes("quota") || msg.includes("rate limit")) {
+    return {
+      message: "Semua provider AI sedang sibuk atau kuota habis. Coba beberapa saat lagi.",
+      severity: "warning",
+    };
+  }
+
+  // MCP server errors
+  if (msg.includes("mcp") || msg.includes("python mcp") || msg.includes("offline")) {
+    return {
+      message: "MCP Server tidak reachable. Pastikan MCP_SERVER_URL mengarah ke backend M yang benar.",
+      severity: "warning",
+    };
+  }
+
+  // Gemini-specific errors
+  if (msg.includes("gemini") || msg.includes("google") || msg.includes("genai")) {
+    return {
+      message: "Gemini API error. Periksa GEMINI_API_KEY dan format payload.",
+      severity: "error",
+    };
+  }
+
+  // Default
+  return {
+    message: err?.message || "Permintaan gagal diproses. Periksa koneksi backend dan konfigurasi env.",
+    severity: "error",
+  };
+}
+
 export function AIChat() {
   const [messages, setMessages] = useState<ChatMessage[]>(() => {
     const saved = loadHistory();
@@ -129,8 +199,9 @@ export function AIChat() {
 
       setSystemStatus({ ...payload, summary: stats, mcps: engines });
     } catch (err: any) {
+      console.error("[AIChat] fetchSystemStatus error:", err);
       setSystemStatus(null);
-      setErrorText(err?.message || "Gagal mengambil status sistem");
+      // Don't show network errors to UI for background polling
     }
   };
 
@@ -231,6 +302,23 @@ export function AIChat() {
         localStorage.setItem("sigai_ai_session_id", response.session_id);
       }
 
+      // Check if response indicates an error
+      if (response?.error) {
+        const errInfo = classifyError({ message: response.error });
+        setErrorText(errInfo.message);
+        const aiMessage: ChatMessage = {
+          id: makeId(),
+          role: "model",
+          content: `⚠️ **Error**: ${errInfo.message}`,
+          timestamp: Date.now(),
+          meta: {
+            provider_status: response?.provider_status || "error",
+          },
+        };
+        setMessages((prev) => [...prev, aiMessage]);
+        return;
+      }
+
       const aiMessage: ChatMessage = {
         id: makeId(),
         role: "model",
@@ -248,17 +336,17 @@ export function AIChat() {
 
       setMessages((prev) => [...prev, aiMessage]);
     } catch (err: any) {
+      console.error("[AIChat] sendMessage error:", err);
+      const errInfo = classifyError(err);
       const fallback: ChatMessage = {
         id: makeId(),
         role: "model",
-        content:
-          err?.message ||
-          "Permintaan gagal diproses. Periksa koneksi backend dan konfigurasi env.",
+        content: `⚠️ **Error**: ${errInfo.message}`,
         timestamp: Date.now(),
         meta: { provider_status: "OFFLINE" },
       };
       setMessages((prev) => [...prev, fallback]);
-      setErrorText(err?.message || "Gagal mengirim pesan");
+      setErrorText(errInfo.message);
     } finally {
       setLoading(false);
     }
@@ -474,7 +562,7 @@ export function AIChat() {
       </div>
 
       <div className="border-t border-brand-border/40 p-3 sm:p-4 bg-black/20 flex flex-col gap-2">
-        { images.length > 0 && (
+        {images.length > 0 && (
           <div className="flex flex-wrap gap-2 px-1">
             {images.map((img, idx) => (
               <div key={idx} className="relative group w-16 h-16 rounded border border-brand-accent/40 overflow-hidden shadow-md">

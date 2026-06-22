@@ -303,17 +303,9 @@ Fokus memberikan audit, strategi, validasi sinyal, dan analisis teknikal berdasa
       let providerStatus = "primary_active";
       let preferredProvider = req.body.provider || undefined;
 
-      const parts: any[] = [];
-      if (images_base64 && images_base64.length > 0) {
-        for (const image of images_base64) {
-          const base64Data = image.includes(",")
-            ? image
-            : `data:image/png;base64,${image}`;
-          parts.push({ type: "image_url", image_url: { url: base64Data } });
-        }
-      }
-      parts.push({ type: "text", text: message || "Halo" });
-
+      // Build tool definitions — using OpenAI-style function calling format
+      // This is correct for Groq, xAI, OpenRouter (OpenAI-compatible)
+      // For Gemini, we remap inside ai_adapter.ts
       const tools: any = [
         {
           type: "function",
@@ -404,13 +396,13 @@ Fokus memberikan audit, strategi, validasi sinyal, dan analisis teknikal berdasa
           function: {
             name: "queryMCPServer",
             description:
-              "Query Python MCP server untuk analisa advanced dari server eksternal. Tersedia endpoint: '/data/twelvedata/quote?symbol=XAU/USD', '/sentiment/twitter?symbol=XAUUSD', '/news/forexfactory', '/mt5/balance', '/mt5/execute'",
+              "Query Python MCP server untuk analisa advanced. Tersedia endpoint: '/api/v1/data/twelvedata/quote?symbol=XAU/USD', '/api/v1/sentiment/twitter?symbol=XAUUSD', '/api/v1/news/forexfactory', '/api/v1/mt5/balance', '/api/v1/mt5/execute'",
             parameters: {
               type: "object",
               properties: {
                 endpoint: {
                   type: "string",
-                  description: "Contoh: /data/twelvedata/quote?symbol=XAU/USD",
+                  description: "Contoh: /api/v1/data/twelvedata/quote?symbol=XAU/USD",
                 },
               },
               required: ["endpoint"],
@@ -437,7 +429,7 @@ Fokus memberikan audit, strategi, validasi sinyal, dan analisis teknikal berdasa
       const clientHist = Array.isArray(history)
         ? history.filter((m: any) => m.content !== "Selesai.")
         : [];
-      const messages: any[] = [...clientHist, { role: "user", content: parts }];
+      const messages: any[] = [...clientHist, { role: "user", content: message || "Halo" }];
 
       let iter = 0;
       while (iter < 8) {
@@ -446,7 +438,7 @@ Fokus memberikan audit, strategi, validasi sinyal, dan analisis teknikal berdasa
           response = await chatCompletionFull(
             messages,
             systemInstruction,
-            tools, // Give tools to AI on ALL modes so it can snipe the market data
+            tools,
             preferredProvider,
             {
               hasImage: !!(images_base64 && images_base64.length > 0),
@@ -569,19 +561,21 @@ Fokus memberikan audit, strategi, validasi sinyal, dan analisis teknikal berdasa
               toolResult = systemState;
             } else if (call.name === "queryMCPServer") {
               try {
-                // Determine port from environment or fallback to 8000
-                // Default to external server config if available.
-                const baseUrl =
-                  process.env.MCP_SERVER_URL || "http://127.0.0.1:8000";
+                const baseUrl = process.env.MCP_SERVER_URL || "http://127.0.0.1:8000";
+                const baseUrlClean = baseUrl.replace(/\/+$/, "");
 
-                // Remove trailing slash if endpoint has leading slash, or fix it up.
-                const sanitizedEndpoint = args.endpoint.startsWith("/")
+                // Ensure endpoint starts with /api/v1
+                let sanitizedEndpoint = args.endpoint.startsWith("/")
                   ? args.endpoint
                   : `/${args.endpoint}`;
+                if (!sanitizedEndpoint.startsWith("/api/v1")) {
+                  sanitizedEndpoint = `/api/v1${sanitizedEndpoint}`;
+                }
+
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), 15000);
 
-                const fetchRes = await fetch(`${baseUrl}${sanitizedEndpoint}`, {
+                const fetchRes = await fetch(`${baseUrlClean}${sanitizedEndpoint}`, {
                   signal: controller.signal,
                   headers: {
                     "x-admin-token": process.env.ADMIN_SECRET || ""
@@ -650,13 +644,7 @@ Fokus memberikan audit, strategi, validasi sinyal, dan analisis teknikal berdasa
 apiRouter.get("/agent/rollback", requireAdminAuth, (req, res) => {
   try {
     console.log(`[AI_AGENT] User minta ROLLBACK`);
-    // Ideally rollback to the sha before last AI commit. Since we don't store
-    // it dynamically in memory specifically for rollback in this snippet,
-    // we use a simple fallback or fetch from git logs.
-    // For now we assume rollback via GitAgent rollbackTo using HEAD~1
-    // (git reset --hard HEAD~1)
     const result = gitAgent.rollbackTo("HEAD~1");
-    // Backup memory?
     memoryManager.saveMemory(
       "past_decisions",
       "Emergency Rollback executed to HEAD~1",
@@ -674,7 +662,6 @@ apiRouter.post("/system/errors/clear", requireAdminAuth, (req, res) => {
 });
 
 apiRouter.post("/ai/rollback", requireAdminAuth, (req, res) => {
-  // Backward compatibility with earlier frontend setting
   try {
     const result = gitAgent.rollbackTo("HEAD~1");
     memoryManager.saveMemory(
@@ -699,18 +686,23 @@ apiRouter.get("/health", (req, res) => {
 
 apiRouter.get("/mcp/status", async (req, res) => {
   const baseUrl = process.env.MCP_SERVER_URL || "http://127.0.0.1:8000";
+  const baseUrlClean = baseUrl.replace(/\/+$/, "");
   let pythonData: any = null;
+  let pythonReachable = false;
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2000);
-    const healthRes = await fetch(`${baseUrl}/health`, {
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const healthRes = await fetch(`${baseUrlClean}/api/v1/health`, {
       signal: controller.signal,
     });
     clearTimeout(timeoutId);
     if (healthRes.ok) {
       pythonData = await healthRes.json();
+      pythonReachable = true;
     }
-  } catch (err) {}
+  } catch (err) {
+    console.log("[MCP Status] Python backend not reachable:", (err as any).message);
+  }
 
   const envs = process.env;
 
@@ -733,20 +725,46 @@ apiRouter.get("/mcp/status", async (req, res) => {
 
   const mcpRegistry = [...nodeRegistry];
 
-  if (pythonData && pythonData.mcps) {
-    for (const pyMcp of pythonData.mcps) {
+  // Handle Python MCP status based on actual backend response
+  if (pythonReachable && pythonData) {
+    // If backend M sends an engines/mcps array, use it
+    if (Array.isArray(pythonData.engines)) {
+      for (const pyMcp of pythonData.engines) {
+        mcpRegistry.push({
+          id: pyMcp.id || pyMcp.name?.toLowerCase().replace(/\s+/g, "-"),
+          name: pyMcp.name || "Unknown Engine",
+          domain: pyMcp.domain || "MCP Backend",
+          status: pyMcp.status || "ONLINE",
+          version: pyMcp.version || "1.0",
+        });
+      }
+    } else if (Array.isArray(pythonData.mcps)) {
+      // Legacy format support
+      for (const pyMcp of pythonData.mcps) {
+        mcpRegistry.push({
+          id: pyMcp.id,
+          name: pyMcp.name,
+          domain: pyMcp.domain,
+          status: pyMcp.status,
+          version: "1.0",
+        });
+      }
+    } else {
+      // Backend M is reachable but doesn't send engine list — show a generic entry
+      // with REACHABLE status (not UNAVAILABLE, because the server IS responding)
       mcpRegistry.push({
-        id: pyMcp.id,
-        name: pyMcp.name,
-        domain: pyMcp.domain,
-        status: pyMcp.status,
+        id: "python-core",
+        name: "Python MCP Backend",
+        domain: "Infrastructure",
+        status: "REACHABLE",
         version: "1.0",
       });
     }
   } else {
+    // Backend M is not reachable at all
     mcpRegistry.push({
       id: "python-core",
-      name: "Python MCP FastApi",
+      name: "Python MCP Backend",
       domain: "Infrastructure",
       status: "UNAVAILABLE",
       version: "0.0",
@@ -850,9 +868,6 @@ apiRouter.post("/webhooks/tradingview", express.json(), async (req, res) => {
       return res.status(401).json({ success: false, error: "Unauthorized" });
     }
 
-    // Expected TV Webhook Format
-    // { "symbol": "XAUUSD", "action": "BUY", "price": 2000, "sl": 1990, "tp": 2020 }
-
     if (!data.symbol || !data.action) {
       return res
         .status(400)
@@ -866,7 +881,6 @@ apiRouter.post("/webhooks/tradingview", express.json(), async (req, res) => {
       `[WEBHOOK] TradingView Signal Received: ${JSON.stringify(data)}`,
     );
 
-    // Only forward to execution engine directly
     const signalPayload = {
       symbol: data.symbol,
       type: data.action.toUpperCase() as "BUY" | "SELL",
@@ -876,7 +890,6 @@ apiRouter.post("/webhooks/tradingview", express.json(), async (req, res) => {
       source: "TRADINGVIEW",
     };
 
-    // The execution engine needs autotradeParams
     const autotradeParams = systemState.autotrade;
 
     await executeTrade(signalPayload, autotradeParams);
@@ -897,7 +910,6 @@ apiRouter.get("/signals", async (req, res) => {
       .prepare(`SELECT * FROM signals ORDER BY timestamp DESC LIMIT 50`)
       .all();
 
-    // Convert to proper types if needed, since SQLite returns everything as flat rows
     const formattedLocalSignals = localSignals.map((s: any) => ({
       ...s,
       currentPips: s.currentPips || 0,
@@ -906,7 +918,6 @@ apiRouter.get("/signals", async (req, res) => {
       confidence: s.confidence || 0,
     }));
 
-    // Merge memory and db (naive) to show live updates instantly
     const merged = [...formattedLocalSignals];
     systemState.signalsHistory.forEach((sig: any) => {
       if (!merged.find((m: any) => m.id === sig.id)) {

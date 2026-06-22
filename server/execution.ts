@@ -12,12 +12,6 @@ export interface TradeSignal {
   [key: string]: any;
 }
 
-// ARSITEKTUR WAJIB:
-// Sistem ini melarang keras scalping M1/HFT (High Frequency Trading) 
-// karena latensi REST/Webhook antara Docker backend dengan MT5 Client Python/Terminal
-// BUKAN ditujukan untuk eksekusi sub-second. 
-// SMC System ini HANYA KHUSUS untuk trading struktural H1/M15.
-
 export interface TradeExecutor {
   executeBuy(signal: TradeSignal, volume: number, options?: any): Promise<boolean>;
   executeSell(signal: TradeSignal, volume: number, options?: any): Promise<boolean>;
@@ -29,6 +23,14 @@ export interface TradeExecutor {
 
 function normalizeProvider(providerName: string): ExecutionProvider {
   return (providerName || "NONE").toUpperCase();
+}
+
+/**
+ * Resolve the Python MCP backend URL with /api/v1 prefix
+ */
+function getPyBackendUrl(): string {
+  const base = process.env.MCP_SERVER_URL || "http://127.0.0.1:8000";
+  return base.replace(/\/+$/, "");
 }
 
 export async function syncPositionModification(
@@ -152,19 +154,8 @@ export async function executeTrade(
       closePosition: async () => false,
       modifyPosition: async () => false,
       getOpenPositions: async () => {
-         const pyBackendUrl = process.env.MCP_SERVER_URL || "http://127.0.0.1:8000";
-         try {
-            const response = await fetch(`${pyBackendUrl}/mt5/positions`, {
-                headers: { "x-admin-token": process.env.ADMIN_SECRET || "" }
-            });
-            if (response.ok) {
-              const data = await response.json();
-              return data.positions || [];
-            }
-         } catch (e) {
-           console.error("[EA_BRIDGE] Error fetching positions", e);
-         }
-         return [];
+        // Use the bridge's dedicated method that hits /api/v1/mt5/positions
+        return await bridge.get_open_positions();
       },
       getAccountInfo: async () => {
         const info = await bridge.get_account_status();
@@ -263,7 +254,6 @@ export async function executeTrade(
     }
     
     if (success) {
-      // Implement Deduplicate logic (Memory store trade executed)
       console.log(`[EXECUTION] Order success ${signal.symbol} ${signal.type} Vol: ${safeLotSize}`);
     }
     return success;
@@ -272,4 +262,3 @@ export async function executeTrade(
     return false;
   }
 }
-

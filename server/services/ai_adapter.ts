@@ -162,11 +162,7 @@ export function markdownCleaner(text: string): string {
   // normalize headers
   cleaned = cleaned.replace(/^#+\s+/gm, "");
 
-  // Pertahankan struktur jika ada bold (seperti **Bias Market:**), tapi hapus bintang untuk teks.
-  // Namun output trading report sering pakai bold, kita biarkan saja bold mark tapi hapus asterisk
-  // Permintaan aslinya: format akhir Bias Market: dsb. Jadi hapus asterisk tapi jadikan Uppercase agar tegas, atau ganti dengan HTML?
-  // Karena AIChat menggunakan <div whitespace-pre-wrap>, markdown bold text `**Bias**` akan tampil persis sebagai `**Bias**`.
-  // Kita hilangkan bintangnya dan ubah teks dalamnya jadi UPPERCASE agar terlihat tegas.
+  // Pertahankan struktur jika ada bold
   cleaned = cleaned.replace(/\*\*(.*?)\*\*/g, (match, p1) => {
     return p1.toUpperCase();
   });
@@ -259,7 +255,6 @@ export function retrieveKnowledgeContext(intents: string[]): string {
 }
 
 export function extractTradeSummary(finalAnswer: string, mode: string): any {
-  // Parsing sederhana untuk mengambil field dari Final Report
   const parseLine = (regex: RegExp) => {
     const match = finalAnswer.match(regex);
     return match ? match[1].trim().replace(/\*\*/g, "") : "";
@@ -302,6 +297,156 @@ export function markProviderSuccess(provider: string) {
   if (failures[provider] !== undefined) {
     failures[provider] = 0;
   }
+}
+
+/**
+ * Map OpenAI-style tools to Gemini functionDeclarations format
+ */
+function mapToolsToGemini(tools: any[]): any {
+  if (!tools || tools.length === 0) return undefined;
+  const declarations = tools
+    .filter((t) => t.type === "function")
+    .map((t) => {
+      const f = t.function;
+      return {
+        name: f.name,
+        description: f.description || "",
+        parameters: f.parameters || { type: "OBJECT" },
+      };
+    });
+  return [{ functionDeclarations: declarations }];
+}
+
+/**
+ * Normalize base64 image data — strip data URL prefix if present
+ * Returns pure base64 string
+ */
+function normalizeBase64Image(input: string): string {
+  if (!input) return "";
+  // Strip data URL prefix if present
+  if (input.includes(",")) {
+    return input.split(",")[1];
+  }
+  return input;
+}
+
+/**
+ * Build Gemini contents array from messages history
+ * Gemini uses: { role: "user"|"model", parts: [{ text }, { inlineData? }] }
+ * 
+ * CRITICAL FIX: Images are merged into the LAST user message as inlineData parts,
+ * not as separate messages. This matches the Gemini SDK expectation.
+ */
+function buildGeminiContents(
+  messages: any[],
+  systemInstruction: string,
+  options?: {
+    hasImage?: boolean;
+    image_base64?: string;
+    images_base64?: string[];
+  },
+): any[] {
+  const contents: any[] = [];
+
+  // Add history messages (excluding the last user message which we'll handle separately)
+  const historyMessages = messages.slice(0, -1);
+  const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+
+  for (const msg of historyMessages) {
+    if (msg.role === "system") continue; // system is handled via config
+
+    const role = msg.role === "assistant" ? "model" : "user";
+    let parts: any[] = [];
+
+    // Handle content
+    if (typeof msg.content === "string") {
+      parts.push({ text: msg.content });
+    } else if (Array.isArray(msg.content)) {
+      // OpenAI-style content array
+      for (const part of msg.content) {
+        if (part.type === "text") {
+          parts.push({ text: part.text });
+        } else if (part.type === "image_url") {
+          const url = part.image_url?.url || "";
+          const b64 = normalizeBase64Image(url);
+          if (b64) {
+            parts.push({ inlineData: { data: b64, mimeType: "image/jpeg" } });
+          }
+        }
+      }
+    }
+
+    // Handle tool responses — convert to user message with functionResponse
+    if (msg.role === "tool" && msg.tool_call_id) {
+      // Gemini uses functionResponse for tool results
+      const responseText = typeof msg.content === "string" 
+        ? msg.content 
+        : JSON.stringify(msg.content);
+      parts.push({ 
+        functionResponse: {
+          name: msg.name || "unknown",
+          response: { content: responseText }
+        }
+      });
+    }
+
+    if (parts.length > 0) {
+      contents.push({ role, parts });
+    }
+  }
+
+  // Handle the last user message — merge text + images into ONE message
+  if (lastMessage) {
+    const role = lastMessage.role === "assistant" ? "model" : "user";
+    let parts: any[] = [];
+
+    // Add text content from last message
+    if (typeof lastMessage.content === "string" && lastMessage.content) {
+      parts.push({ text: lastMessage.content });
+    } else if (Array.isArray(lastMessage.content)) {
+      for (const part of lastMessage.content) {
+        if (part.type === "text") {
+          parts.push({ text: part.text });
+        } else if (part.type === "image_url") {
+          const url = part.image_url?.url || "";
+          const b64 = normalizeBase64Image(url);
+          if (b64) {
+            parts.push({ inlineData: { data: b64, mimeType: "image/jpeg" } });
+          }
+        }
+      }
+    }
+
+    // Merge images from options into the SAME last user message
+    if (options?.images_base64 && options.images_base64.length > 0) {
+      for (const imgBase64 of options.images_base64) {
+        const b64Data = normalizeBase64Image(imgBase64);
+        if (b64Data) {
+          parts.push({
+            inlineData: { data: b64Data, mimeType: "image/jpeg" },
+          });
+        }
+      }
+    } else if (options?.image_base64) {
+      const b64Data = normalizeBase64Image(options.image_base64);
+      if (b64Data) {
+        parts.push({
+          inlineData: { data: b64Data, mimeType: "image/jpeg" },
+        });
+      }
+    }
+
+    if (parts.length > 0) {
+      contents.push({ role, parts });
+    }
+  }
+
+  // If no messages have content, add a minimal user message
+  if (contents.length === 0 && systemInstruction) {
+    contents.push({ role: "user", parts: [{ text: "Hello" }] });
+  }
+
+  return contents;
 }
 
 export async function generateContent(
@@ -349,7 +494,7 @@ export async function generateContent(
         (process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY_2)
       ) {
         logger.info(`Attempting Gemini...`);
-        modelUsed = "gemini-3.5-flash";
+        modelUsed = "gemini-2.0-flash";
         const keys = [
           process.env.GEMINI_API_KEY,
           process.env.GEMINI_API_KEY_2,
@@ -359,52 +504,22 @@ export async function generateContent(
         for (const key of keys) {
           try {
             const ai = new GoogleGenAI({ apiKey: key });
-            let geminiParts: any[] = [];
 
-            if (options?.images_base64 && options.images_base64.length > 0) {
-              for (const imgBase64 of options.images_base64) {
-                const b64Data = imgBase64.includes(",")
-                  ? imgBase64.split(",")[1]
-                  : imgBase64;
-                geminiParts.push({
-                  inlineData: { data: b64Data, mimeType: "image/jpeg" },
-                });
-              }
-            } else if (options?.image_base64) {
-              const b64Data = options.image_base64.includes(",")
-                ? options.image_base64.split(",")[1]
-                : options.image_base64;
-              geminiParts.push({
-                inlineData: { data: b64Data, mimeType: "image/jpeg" },
-              });
-            }
+            // Build full contents array with history + images merged into last message
+            const contents = buildGeminiContents(history, customSystemInstruction || "", options);
 
-            const sysText = customSystemInstruction || "Halo";
-            const lastMsg =
-              history.length > 0 ? history[history.length - 1].content : prompt;
-            geminiParts.push({ text: lastMsg || "Halo" });
-
+            // Map tools to Gemini format
             let mappedTools: any = undefined;
             if (tools && tools.length > 0) {
-              const declarations = tools
-                .filter((t) => t.type === "function")
-                .map((t) => {
-                  const f = t.function;
-                  return {
-                    name: f.name,
-                    description: f.description || "",
-                    parameters: f.parameters || { type: "OBJECT" },
-                  };
-                });
-              mappedTools = [{ functionDeclarations: declarations }];
+              mappedTools = mapToolsToGemini(tools);
             }
 
             const response = await ai.models.generateContent({
               model: modelUsed,
-              contents: [{ role: "user", parts: geminiParts }],
-              config: { 
-                systemInstruction: sysText, 
-                tools: mappedTools 
+              contents: contents,
+              config: {
+                systemInstruction: customSystemInstruction || undefined,
+                tools: mappedTools,
               },
             });
 
