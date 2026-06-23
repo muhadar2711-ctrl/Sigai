@@ -14,22 +14,23 @@ export async function checkNewsBlock(): Promise<{
   reason: string;
 }> {
   const nowMs = Date.now();
-
-  /*
-  // This functionality is disabled as the Python backend is not available in the current environment.
   const pyBackendUrl = process.env.MCP_SERVER_URL || "http://127.0.0.1:8000";
-  try {
-    const ffResponse = await axios.get(`${pyBackendUrl}/news/forexfactory`, {
-      timeout: 8000,
-    });
-    // Note: The original logic for this section was incomplete.
-    // If the Python service is ever restored, this part may need implementation.
-  } catch (err: any) {
-    // console.warn("Python MCP ForexFactory connection attempt failed (as expected):");
-  }
-  */
 
-  // FOREXFACTORY JSON DIRECT (WITH CACHING)
+  // 1. PYTHON MCP (ForexFactory & Sentiment)
+  // This part is now active again and will use the MCP_SERVER_URL environment variable.
+  if (process.env.MCP_SERVER_URL) { // Only run if the variable is set
+      try {
+        const ffResponse = await axios.get(`${pyBackendUrl}/news/forexfactory`, {
+          timeout: 8000,
+        });
+        // Further processing of the response can be added here if needed.
+      } catch (err: any) {
+        console.warn("Python MCP ForexFactory failed:", err.message);
+        addSystemError("MCP_CONNECTION_FAILED", { url: pyBackendUrl });
+      }
+  }
+
+  // 1b. FOREXFACTORY JSON DIRECT (WITH CACHING) - Fallback
   try {
     if (nowMs - cacheTimestamp < CACHE_DURATION_MS && cachedEvents.length > 0) {
         // Using cached data
@@ -60,7 +61,7 @@ export async function checkNewsBlock(): Promise<{
     console.warn("ForexFactory JSON fetch failed: " + e.message);
   }
 
-  // NEWSAPI FALLBACK
+  // 2. NEWSAPI FALLBACK
   const newsApiKey = process.env.NEWSAPI_KEY || process.env.NEWS_API_KEY;
 
   if (newsApiKey && nowMs > newsApiCooldownUntil) {
