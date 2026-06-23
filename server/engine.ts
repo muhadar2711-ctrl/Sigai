@@ -119,34 +119,41 @@ export async function bootstrapSystem() {
 }
 
 export function initializeEngines() {
-  const setupStrategy = (id: string, name: string, steps: string[]) => {
-    systemState.strategies[id] = {
-      strategyId: id,
-      name,
-      status: "IDLE",
-      evidenceLevel: 0,
-      steps: steps.map(s => ({ id: s, name: s.replace(/_/g, " "), status: "AWAITING", updatedAt: new Date().toISOString(), auditReason: "Awaiting initialization" }))
-    };
-  };
+    try {
+        const setupStrategy = (id: string, name: string, steps: string[]) => {
+            systemState.strategies[id] = {
+                strategyId: id,
+                name,
+                status: "IDLE",
+                evidenceLevel: 0,
+                steps: steps.map(s => ({ id: s, name: s.replace(/_/g, " "), status: "AWAITING", updatedAt: new Date().toISOString(), auditReason: "Awaiting initialization" }))
+            };
+        };
 
-  setupStrategy("SMC_V3", "SMC Scalping V3", ["Killzone", "HTF_Bias", "Liquidity_Sweep", "MSS", "Retest"]);
-  setupStrategy("LONDON_M15", "London M15 SMC", ["Killzone", "HTF_Bias", "Asia_Range_Scan", "Sweep", "MSS", "Retest"]);
-  setupStrategy("SND_ENGULFING", "SnD Engulfing", ["Killzone", "H1_Trend", "Snd_Zone_Detection", "Zone_Test", "Engulfing_Confirmation"]);
-  setupStrategy("NEWS_EDGE", "News Edge Strategy", ["News_Context", "Volatility_Spike", "Sweep_Confirmation"]);
+        setupStrategy("SMC_V3", "SMC Scalping V3", ["Killzone", "HTF_Bias", "Liquidity_Sweep", "MSS", "Retest"]);
+        setupStrategy("LONDON_M15", "London M15 SMC", ["Killzone", "HTF_Bias", "Asia_Range_Scan", "Sweep", "MSS", "Retest"]);
+        setupStrategy("SND_ENGULFING", "SnD Engulfing", ["Killzone", "H1_Trend", "Snd_Zone_Detection", "Zone_Test", "Engulfing_Confirmation"]);
+        setupStrategy("NEWS_EDGE", "News Edge Strategy", ["News_Context", "Volatility_Spike", "Sweep_Confirmation"]);
 
-  initTelegram();
-  initializeDataFeed();
+        initTelegram();
+        initializeDataFeed();
 
-  cron.schedule("* * * * *", async () => {
-    if (systemState.robotStatus === "EMERGENCY_STOP") return;
-    await runTradingPipeline("GC=F", "XAUUSD", "H1", "M5", "M1", "Scalping");
-  });
+        cron.schedule("* * * * *", async () => {
+            if (systemState.robotStatus === "EMERGENCY_STOP") return;
+            await runTradingPipeline("GC=F", "XAUUSD", "H1", "M5", "M1", "Scalping");
+        });
 
-  cron.schedule("*/2 * * * *", async () => {
-    if (systemState.robotStatus === "EMERGENCY_STOP") return;
-    await runTradingPipeline("EUR=X", "EURUSD", "H1", "M5", "M1", "Scalping");
-  });
+        cron.schedule("*/2 * * * *", async () => {
+            if (systemState.robotStatus === "EMERGENCY_STOP") return;
+            await runTradingPipeline("EUR=X", "EURUSD", "H1", "M5", "M1", "Scalping");
+        });
+
+    } catch (error) {
+        addSystemError('ENGINE_INITIALIZATION_FAILED', { error });
+        // We log the error but do not re-throw, allowing the server to start.
+    }
 }
+
 
 // --- VERIFICATION GATE (Line 15-22, 58) ---
 export function verificationGate(strategies: StrategySetup[], symbol: string): { 
