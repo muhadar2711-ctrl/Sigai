@@ -50,6 +50,7 @@ interface StrategySetup {
 export const systemState: any = {
   activeSignal: null,
   signalsHistory: [],
+  systemErrors: [],
   lastScan: null,
   isNewsBlocked: false,
   engineMode: "STANDARD",
@@ -73,6 +74,27 @@ const signalCooldowns: Record<string, number> = {};
 const notifiedSignals: Set<string> = new Set();
 
 // --- CORE UTILS ---
+
+export function addSystemError(message: string, meta?: any) {
+  console.error(`[SYSTEM_ERROR] ${message}`, meta || '');
+  systemState.systemErrors.unshift({
+    time: new Date().toISOString(),
+    message,
+    meta: meta || null,
+  });
+  if (systemState.systemErrors.length > 100) {
+    systemState.systemErrors.pop();
+  }
+}
+
+export function updateLivePrice(symbol: string, price: number) {
+    if (systemState.prices[symbol] !== undefined) {
+        systemState.prices[symbol] = price;
+    } else {
+        addSystemError(`Attempted to update price for unknown symbol: ${symbol}`);
+    }
+}
+
 function getSignalKey(symbol: string, strategy: string, candleTime: number | string): string {
   return `${symbol}_${strategy}_${candleTime}`.toUpperCase();
 }
@@ -92,6 +114,7 @@ export async function bootstrapSystem() {
     console.log(`[${new Date().toISOString()}] [BOOTSTRAP] System Integrated & Sequential Pipeline Online.`);
   } catch (e) {
     console.error(`[${new Date().toISOString()}] [BOOTSTRAP FATAL]`, e);
+    addSystemError("BOOTSTRAP_FATAL", e);
   }
 }
 
@@ -102,7 +125,7 @@ export function initializeEngines() {
       name,
       status: "IDLE",
       evidenceLevel: 0,
-      steps: steps.map(s => ({ id: s, name: s.replace(/_/g, " "), status: "AWAITING", updatedAt: new Date().toISOString(), auditReason: "Awaiting initialization" })),
+      steps: steps.map(s => ({ id: s, name: s.replace(/_/g, " "), status: "AWAITING", updatedAt: new Date().toISOString(), auditReason: "Awaiting initialization" }))
     };
   };
 
@@ -131,7 +154,7 @@ export function verificationGate(strategies: StrategySetup[], symbol: string): {
   audit_trail: string[];
 } {
   const audit_trail: string[] = [];
-  const activeSignals = strategies.filter(s => s.status === "SIGNAL_FOUND" || s.status === "APPROVED");
+  const activeSignals = strategies.filter(s => s.status === "SIGNAL_FOUND");
   
   if (activeSignals.length === 0) return { verdict: "WAIT", audit_trail };
 
@@ -198,9 +221,11 @@ export async function runTradingPipeline(symbolFetch: string, symbolDisp: string
       const ageMinutes = (now - dataTimestamp) / (1000 * 60);
 
       if (ageMinutes > 15) {
-        console.error(`[${new Date().toISOString()}] [PIPELINE_REJECTED] Stale market data for ${symbolDisp}. Age: ${ageMinutes.toFixed(1)}m. Threshold: 15m.`);
+        const reason = `Stale market data for ${symbolDisp}. Age: ${ageMinutes.toFixed(1)}m.`;
+        console.error(`[${new Date().toISOString()}] [PIPELINE_REJECTED] ${reason}`);
         systemState.lastScanError = "STALE_MARKET_DATA";
-        // Notify dashboard of rejection
+        addSystemError("PIPELINE_REJECTED", { reason });
+        
         Object.keys(systemState.strategies).forEach(id => {
           if (id.includes(symbolDisp)) {
              systemState.strategies[id].status = "REJECTED";
@@ -210,8 +235,11 @@ export async function runTradingPipeline(symbolFetch: string, symbolDisp: string
         return;
       }
 
-      systemState.prices[symbolDisp] = lastCandle.close;
-    } catch (e) { return; }
+      updateLivePrice(symbolDisp, lastCandle.close);
+    } catch (e: any) { 
+      addSystemError("FETCH_MARKET_DATA_FAILED", { error: e.message });
+      return; 
+    }
 
     const lastCandle = m5Candles[m5Candles.length - 1];
     const candleTime = new Date(lastCandle.timestamp).getTime();
@@ -293,8 +321,6 @@ async function processStrategySequential(strategyId: string, symbol: string, can
     
     if (signalCooldowns[signalKey] && Date.now() < signalCooldowns[signalKey]) return;
 
-    // Line 19: Sinkronkan dengan AI Critic sebelum Dispatch
-    // AI Critic is ONLY allowed to process recent data. 
     const aiResult = await validateSignalWithAI(strategy.evidence, {});
 
     if (aiResult.verdict === "APPROVED") {
@@ -357,5 +383,7 @@ async function saveSignalToHistoryAndDB(signal: any) {
     db.prepare(`INSERT INTO signals (id, symbol, type, status, strategy, timestamp) VALUES (?, ?, ?, ?, ?, ?)`).run(
       signal.id, signal.symbol, signal.type, signal.status, signal.strategy, signal.timestamp
     );
-  } catch (e) {}
+  } catch (e) {
+    addSystemError("SAVE_TO_DB_FAILED", { error: e, signalId: signal.id });
+  }
 }

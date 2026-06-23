@@ -54,7 +54,7 @@ function detectAsiaSweepAndChoch(
     }
     if (swept) {
       sweepType = "BULLISH_SWEEP";
-      if (structure.lastCHOCH === "BULLISH" || structure.trend === "BULLISH") {
+      if (structure.lastSweep?.type === "BULLISH_SWEEP" || structure.trend === "BULLISH") {
         chochValid = true;
       }
     }
@@ -72,7 +72,7 @@ function detectAsiaSweepAndChoch(
     }
     if (swept) {
       sweepType = "BEARISH_SWEEP";
-      if (structure.lastCHOCH === "BEARISH" || structure.trend === "BEARISH") {
+      if (structure.lastSweep?.type === "BEARISH_SWEEP" || structure.trend === "BEARISH") {
         chochValid = true;
       }
     }

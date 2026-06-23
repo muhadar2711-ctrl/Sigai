@@ -1,10 +1,14 @@
-import { addSystemError, systemState } from "./engine.js";
+
+import express from 'express';
+import { systemState } from "./engine.js";
 import { memoryManager } from "./memory.js";
 import {
   validateSignalAdapter,
   chatCompletionFull,
   retrieveKnowledgeContext,
 } from "./services/ai_adapter.js";
+
+const router = express.Router();
 
 // --- TAHAP 2: PIPELINE ORKESTRASI TRADING ANALYST (STRICT EXECUTION ENGINE) ---
 
@@ -127,13 +131,7 @@ export async function runOrchestratedChat(
   // Engine State Check
   if (systemState.engineMode) dataConfidence += 60;
 
-  const liveDataContext = `[LIVE DATA SYNC STATUS: ${dataConfidence}%]
-- Media Sentiment: ${pySentiment}
-- Engine Mode: ${systemState.engineMode || "UNKNOWN"}
-- Robot Status: ${systemState.robotStatus || "OFF"}
-- News Block: ${systemState.isNewsBlocked ? "ACTIVE" : "INACTIVE"}
-
-STRICT RULE: Jika Data Sync < 50%, jawab "DATA TIDAK TERSEDIA". JANGAN HALUSINASI ANGKA.`;
+  const liveDataContext = `[LIVE DATA SYNC STATUS: ${dataConfidence}%]\n- Media Sentiment: ${pySentiment}\n- Engine Mode: ${systemState.engineMode || "UNKNOWN"}\n- Robot Status: ${systemState.robotStatus || "OFF"}\n- News Block: ${systemState.isNewsBlocked ? "ACTIVE" : "INACTIVE"}\n\nSTRICT RULE: Jika Data Sync < 50%, jawab "DATA TIDAK TERSEDIA". JANGAN HALUSINASI ANGKA.`;
 
   let intermediateSteps: { agent: string; content: string }[] = [];
   const messagesPayload = [
@@ -163,14 +161,7 @@ STRICT RULE: Jika Data Sync < 50%, jawab "DATA TIDAK TERSEDIA". JANGAN HALUSINAS
         break;
     }
 
-    const prompt = `${baseSystemPrompt}
-${knowledgeContext}
-${liveDataContext}
-
-ROLE: ${skill}
-${skillInstruction}
-
-CORE REQUIREMENT: Berikan BUKTI (Evidence) untuk setiap klaim. Jika evidence tidak ada, katakan "EVIDENCE TIDAK DITEMUKAN".`;
+    const prompt = `${baseSystemPrompt}\n${knowledgeContext}\n${liveDataContext}\n\nROLE: ${skill}\n${skillInstruction}\n\nCORE REQUIREMENT: Berikan BUKTI (Evidence) untuk setiap klaim. Jika evidence tidak ada, katakan "EVIDENCE TIDAK DITEMUKAN".`;
 
     try {
       const res = await chatCompletionFull(
@@ -194,19 +185,7 @@ CORE REQUIREMENT: Berikan BUKTI (Evidence) untuk setiap klaim. Jika evidence tid
   intermediateSteps = agentResults.filter((r) => r.content.length > 5);
 
   // --- [VERIFICATION GATE] ---
-  const verifierInstruction = `Kamu adalah Quality Control & Verification Agent.
-Tugasmu mendeteksi KONTRADIKSI dan VALIDASI BUKTI dari draf agen.
-
-DRAF INTERNAL:
-${intermediateSteps.map((s) => `[${s.agent}]: ${s.content}`).join("\n")}
-
-KRITERIA REJECT (Wajib Jawab 'WAIT' atau 'REJECT'):
-1. Agen Strategy dan Risk bertolak belakang.
-2. Klaim teknikal (BOS/FVG) tidak didukung data Chart Analyst.
-3. Live Data Sync tidak memadai untuk eksekusi.
-4. Terdapat indikasi halusinasi angka.
-
-Output: Berikan 'VERDICT' (CLEAN/CONTRADICTION/LOW_EVIDENCE) dan alasan singkat.`;
+  const verifierInstruction = `Kamu adalah Quality Control & Verification Agent.\nTugasmu mendeteksi KONTRADIKSI dan VALIDASI BUKTI dari draf agen.\n\nDRAF INTERNAL:\n${intermediateSteps.map((s) => `[${s.agent}]: ${s.content}`).join("\n")}\n\nKRITERIA REJECT (Wajib Jawab 'WAIT' atau 'REJECT'):\n1. Agen Strategy dan Risk bertolak belakang.\n2. Klaim teknikal (BOS/FVG) tidak didukung data Chart Analyst.\n3. Live Data Sync tidak memadai untuk eksekusi.\n4. Terdapat indikasi halusinasi angka.\n\nOutput: Berikan 'VERDICT' (CLEAN/CONTRADICTION/LOW_EVIDENCE) dan alasan singkat.`;
 
   let verificationVerdict = "CLEAN";
   try {
@@ -227,23 +206,13 @@ Output: Berikan 'VERDICT' (CLEAN/CONTRADICTION/LOW_EVIDENCE) dan alasan singkat.
   }
 
   // --- [FINAL CHIEF ANALYSIS] ---
-  const criticSystemInstruction = `Kamu adalah Chief Trading Analyst AI.
-Tugasmu melakukan audit akhir terhadap bukti (evidence) yang diberikan tim.
-
-ATURAN AUDIT:
-- Jika Verifier menyatakan REJECTED/LOW_EVIDENCE, kamu WAJIB menjawab "WAIT - Evidence Tidak Mencukupi" atau "NO TRADE".
-- Dilarang memperkuat klaim agen jika bukti visual/data tidak sinkron.
-- Struktur Jawaban: BIAS | ENTRY | SL | TP | CONFIDENCE | RATIONALE.
-- Jika data sync gagal, jawab "DATA TIDAK TERSEDIA".
-
-${memoryContext}
-Gunakan Bahasa Indonesia. Profesional dan Tanpa Halusinasi.`;
+  const criticSystemInstruction = `Kamu adalah Chief Trading Analyst AI.\nTugasmu melakukan audit akhir terhadap bukti (evidence) yang diberikan tim.\n\nATURAN AUDIT:\n- Jika Verifier menyatakan REJECTED/LOW_EVIDENCE, kamu WAJIB menjawab "WAIT - Evidence Tidak Mencukupi" atau "NO TRADE".\n- Dilarang memperkuat klaim agen jika bukti visual/data tidak sinkron.\n- Struktur Jawaban: BIAS | ENTRY | SL | TP | CONFIDENCE | RATIONALE.\n- Jika data sync gagal, jawab "DATA TIDAK TERSEDIA".\n\n${memoryContext}\nGunakan Bahasa Indonesia. Profesional dan Tanpa Halusinasi.`;
 
   const draftCombined = intermediateSteps
     .map((step) => `--- [DRAFT ${step.agent}] ---\n${step.content}`)
     .join("\n\n");
   
-  const criticPrompt = `STATUS VERIFIKASI: ${verificationVerdict}\n\nUSER REQUEST: "${message}" \n\nDRAF TIM:\n\n${draftCombined}`;
+  const criticPrompt = `STATUS VERIFIKASI: ${verificationVerdict}\n\nUSER REQUEST: \"${message}\" \n\nDRAF TIM:\n\n${draftCombined}`;
 
   let finalAnswer = "";
   try {
@@ -282,9 +251,7 @@ export async function chatWithMechanic(
   history: any[],
   customKey?: string,
 ): Promise<string> {
-  const systemInstruction = `Kamu adalah XAUUSD AI Architect. 
-AUDIT MODE: Cari Root Cause, File, Line, dan berikan Patch Valid. 
-DILARANG HALUSINASI KODE. Jika tidak tahu, katakan 'LOG TIDAK CUKUP'.`;
+  const systemInstruction = `Kamu adalah XAUUSD AI Architect. \nAUDIT MODE: Cari Root Cause, File, Line, dan berikan Patch Valid. \nDILARANG HALUSINASI KODE. Jika tidak tahu, katakan 'LOG TIDAK CUKUP'.`;
 
   const formattedHistory = history
     .filter((msg: any) => msg.role === "user" || msg.role === "model")
@@ -305,3 +272,15 @@ DILARANG HALUSINASI KODE. Jika tidak tahu, katakan 'LOG TIDAK CUKUP'.`;
     return `AI Error: ${err.message}`;
   }
 }
+
+router.post('/chat', async (req, res) => {
+  try {
+    const { message, images_base64, history, baseSystemPrompt } = req.body;
+    const result = await runOrchestratedChat(message, images_base64, history, baseSystemPrompt);
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to process chat', details: error.message });
+  }
+});
+
+export const aiRouter = router;

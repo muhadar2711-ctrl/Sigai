@@ -1,4 +1,4 @@
-import MetaApi from "metaapi.cloud-sdk";
+import * as MetaApiSDK from 'metaapi.cloud-sdk';
 
 export class MetaApiBridge {
   private api: any = null;
@@ -11,7 +11,8 @@ export class MetaApiBridge {
     this.accountId = process.env.META_API_ACCOUNT_ID || "";
 
     if (this.token && this.accountId) {
-      this.api = new MetaApi(this.token);
+      // Use the default export from the imported module
+      this.api = new (MetaApiSDK as any).default(this.token);
     }
   }
 

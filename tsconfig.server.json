@@ -1,10 +1,12 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "module": "CommonJS",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
     "outDir": "./dist",
-    "noEmit": false
+    "noEmit": false,
+    "esModuleInterop": true
   },
-  "include": ["server"],
+  "include": ["server.ts", "server"],
   "exclude": ["node_modules", "src"]
 }

@@ -3,10 +3,21 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import cors from 'cors';
+import axios from 'axios'; // Impor axios
 import { createServer as createViteServer } from 'vite';
-import { initializeEngines, queryMCPServer } from './server/engine';
-import { aiRouter } from './server/ai_engine';
-import { EAWebhookBridge } from './server/execution/ea_webhook';
+import { initializeEngines } from './server/engine.js';
+import { aiRouter } from './server/ai_engine.js';
+import { EAWebhookBridge } from './server/execution/ea_webhook.js';
+
+// Implementasi queryMCPServer yang hilang
+async function queryMCPServer(endpoint: string) {
+  const MCP_SERVER_URL = process.env.MCP_SERVER_URL;
+  if (!MCP_SERVER_URL) {
+    throw new Error('MCP_SERVER_URL is not defined in environment variables.');
+  }
+  const response = await axios.get(`${MCP_SERVER_URL}${endpoint}`);
+  return response.data;
+}
 
 async function startServer() {
   const app = express();

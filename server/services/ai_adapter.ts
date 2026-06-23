@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI, Content, Part, Tool } from '@google/generative-ai';
+import { GoogleGenerativeAI, Content, Part, Tool, FunctionDeclarationSchemaType } from '@google/generative-ai';
 
 // --- Interfaces ---
 export interface TradeSignal {
@@ -20,27 +20,27 @@ const tradeSignalTool: Tool = {
       name: 'execute_trade_signal',
       description: 'Mengeksekusi sinyal perdagangan ke terminal MT5 dengan parameter numerik ketat.',
       parameters: {
-        type: 'OBJECT',
+        type: FunctionDeclarationSchemaType.OBJECT,
         properties: {
           action: { 
-            type: 'STRING', 
+            type: FunctionDeclarationSchemaType.STRING, 
             enum: ['BUY', 'SELL'],
             description: "Aksi perdagangan wajib 'BUY' atau 'SELL' (Uppercase)." 
           },
           symbol: { 
-            type: 'STRING', 
+            type: FunctionDeclarationSchemaType.STRING, 
             description: "Simbol instrumen keuangan valid, misal: 'XAUUSD'." 
           },
           stopLoss: { 
-            type: 'NUMBER', 
+            type: FunctionDeclarationSchemaType.NUMBER, 
             description: 'Level harga Stop Loss (SL). Wajib angka positif > 0.' 
           },
           takeProfit: { 
-            type: 'NUMBER', 
+            type: FunctionDeclarationSchemaType.NUMBER, 
             description: 'Level harga Take Profit (TP). Wajib angka positif > 0.' 
           },
           risk: { 
-            type: 'NUMBER', 
+            type: FunctionDeclarationSchemaType.NUMBER, 
             description: 'Persentase risiko (0.1 - 5.0). Wajib angka.' 
           },
         },
@@ -155,7 +155,7 @@ class GoogleGeminiProvider implements AIProvider {
 
       for await (const chunk of result.stream) {
         if (chunk.functionCalls) {
-          toolCalls.push(...chunk.functionCalls);
+          toolCalls.push(...chunk.functionCalls());
         }
         const chunkText = chunk.text();
         if(chunkText) {
@@ -224,4 +224,26 @@ if (process.env.GEMINI_API_KEY) {
 }
 
 export const aiAdapter = new AIAdapter(defaultProvider);
+
+export async function chatCompletionFull(history: any[], systemInstruction: string, images_base64?: any, temperature?: any, options?: any) {
+    // This is a simplified wrapper. Real implementation might need more sophisticated mapping.
+    const newMessage = history.pop().content;
+    return aiAdapter.generateContent(history, newMessage, images_base64, temperature || 0.2, options?.mode === 'market_scan' ? 'gemini-1.5-flash' : 'gemini-1.5-pro');
+}
+
+export async function validateSignalAdapter(signalData: any, marketContext?: any): Promise<{ verdict: "APPROVED" | "REJECTED"; reason: string; }> {
+    // Dummy implementation. In a real scenario, this would use AI to validate the signal.
+    console.log("Validating signal with dummy adapter:", { signalData, marketContext });
+    if (signalData.entry > 0 && signalData.sl > 0 && signalData.tp1 > 0) {
+        return { verdict: "APPROVED", reason: "Dummy validation passed" };
+    }
+    return { verdict: "REJECTED", reason: "Invalid signal data for dummy validation" };
+}
+
+export function retrieveKnowledgeContext(skills: string[]): string {
+    // Dummy implementation
+    return "[KNOWLEDGE_CONTEXT] According to market analysis, the current trend is bullish.";
+}
+
+
 export { buildGeminiPayload, verifyDataIntegrity };

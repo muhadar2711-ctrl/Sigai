@@ -135,18 +135,31 @@ export async function runXauUsdSMCV3(symbol: string = "XAU/USD") {
     }
 
     // Step 4: Structure Shift
-    const chochBos = m5Structure.lastCHOCH || m5Structure.lastBOS || "NONE";
-    state.setupState.step4_StructureShift = chochBos;
+    let structureShiftType: 'BULLISH' | 'BEARISH' | 'NONE' = 'NONE';
 
-    if (chochBos === "NONE") {
+    if (m5Structure.lastSweep?.type === 'BULLISH_SWEEP') {
+        structureShiftType = 'BULLISH';
+    } else if (m5Structure.lastSweep?.type === 'BEARISH_SWEEP') {
+        structureShiftType = 'BEARISH';
+    } else if (m5Structure.bos_validation === 'VALID') {
+        if (m5Structure.trend === 'BULLISH') {
+            structureShiftType = 'BULLISH';
+        } else if (m5Structure.trend === 'BEARISH') {
+            structureShiftType = 'BEARISH';
+        }
+    }
+
+    state.setupState.step4_StructureShift = structureShiftType;
+
+    if (structureShiftType === "NONE") {
       state.debugAudit.lastReasonRejected = "NO_CHOCH_BOS";
       state.setupState.step4_StructureShift = "REJECTED (NONE)";
       return null;
     }
 
     if (
-      (htfBias === "BULLISH" && chochBos !== "BULLISH") ||
-      (htfBias === "BEARISH" && chochBos !== "BEARISH")
+      (htfBias === "BULLISH" && structureShiftType !== "BULLISH") ||
+      (htfBias === "BEARISH" && structureShiftType !== "BEARISH")
     ) {
       state.debugAudit.lastReasonRejected = "STRUCTURE_DIRECTION_MISMATCH";
       state.setupState.step4_StructureShift = "REJECTED (MISMATCH)";
