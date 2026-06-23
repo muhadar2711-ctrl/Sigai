@@ -105,10 +105,10 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const publicPath = path.join(process.cwd(), 'dist/public');
-    app.use(express.static(publicPath));
+    const buildPath = path.join(process.cwd(), 'dist');
+    app.use(express.static(buildPath));
     app.use('*', (req, res) => {
-      res.sendFile(path.join(publicPath, 'index.html'));
+      res.sendFile(path.join(buildPath, 'index.html'));
     });
   }
 
