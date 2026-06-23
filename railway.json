@@ -1,19 +1,20 @@
-
 {
   "$schema": "https://railway.app/railway.schema.json",
   "build": {
-    "builder": "NIXPACKS",
-    "nixpacksConfig": {
-      "installCommand": "npm install",
-      "buildCommand": "npm run build",
-      "startCommand": "npm run start"
-    }
+    "builder": "NIXPACKS"
   },
   "deploy": {
     "startCommand": "npm run start",
-    "healthcheckPath": "/api/mcp/status",
-    "healthcheckTimeout": 300,
+    "healthcheckPath": "/health",
+    "healthcheckTimeout": 120,
+    "healthcheckInterval": 30,
     "restartPolicyType": "ON_FAILURE",
-    "restartPolicyMaxRetries": 5
-  }
+    "restartPolicyMaxRetries": 10
+  },
+  "domains": [
+    {
+      "host": "sigai-production.up.railway.app",
+      "port": 8080
+    }
+  ]
 }
