@@ -9,15 +9,15 @@ let cachedEvents: any[] = [];
 let cacheTimestamp: number = 0;
 const CACHE_DURATION_MS = 30 * 60 * 1000; // 30 minutes
 
-
 export async function checkNewsBlock(): Promise<{
   isBlocked: boolean;
   reason: string;
 }> {
   const nowMs = Date.now();
-  const pyBackendUrl = process.env.MCP_SERVER_URL || "http://127.0.0.1:8000";
 
-  // 1. PYTHON MCP (ForexFactory & Sentiment) - This part will still be attempted every time
+  /*
+  // This functionality is disabled as the Python backend is not available in the current environment.
+  const pyBackendUrl = process.env.MCP_SERVER_URL || "http://127.0.0.1:8000";
   try {
     const ffResponse = await axios.get(`${pyBackendUrl}/news/forexfactory`, {
       timeout: 8000,
@@ -25,12 +25,12 @@ export async function checkNewsBlock(): Promise<{
     // Note: The original logic for this section was incomplete.
     // If the Python service is ever restored, this part may need implementation.
   } catch (err: any) {
-    console.warn("Python MCP ForexFactory failed:", err.message);
+    // console.warn("Python MCP ForexFactory connection attempt failed (as expected):");
   }
+  */
 
-  // 1b. FOREXFACTORY JSON DIRECT (WITH CACHING)
+  // FOREXFACTORY JSON DIRECT (WITH CACHING)
   try {
-    // Use cache if it's recent
     if (nowMs - cacheTimestamp < CACHE_DURATION_MS && cachedEvents.length > 0) {
         // Using cached data
     } else {
@@ -48,7 +48,6 @@ export async function checkNewsBlock(): Promise<{
         const evTime = new Date(ev.date).getTime();
         const diffMinutes = (evTime - nowMs) / (1000 * 60);
 
-        // Block if within 30 minutes before and 30 minutes after the high impact event
         if (diffMinutes >= -30 && diffMinutes <= 30) {
           return {
             isBlocked: true,
@@ -59,10 +58,9 @@ export async function checkNewsBlock(): Promise<{
     }
   } catch (e: any) {
     console.warn("ForexFactory JSON fetch failed: " + e.message);
-    // If the fetch fails, we will rely on the (potentially stale) cache and other news sources
   }
 
-  // 2. NEWSAPI FALLBACK
+  // NEWSAPI FALLBACK
   const newsApiKey = process.env.NEWSAPI_KEY || process.env.NEWS_API_KEY;
 
   if (newsApiKey && nowMs > newsApiCooldownUntil) {
