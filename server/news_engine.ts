@@ -4,6 +4,12 @@ import { addSystemError } from "./engine.js";
 
 let newsApiCooldownUntil = 0;
 
+// Cache for ForexFactory data
+let cachedEvents: any[] = [];
+let cacheTimestamp: number = 0;
+const CACHE_DURATION_MS = 30 * 60 * 1000; // 30 minutes
+
+
 export async function checkNewsBlock(): Promise<{
   isBlocked: boolean;
   reason: string;
@@ -11,43 +17,33 @@ export async function checkNewsBlock(): Promise<{
   const nowMs = Date.now();
   const pyBackendUrl = process.env.MCP_SERVER_URL || "http://127.0.0.1:8000";
 
-  // 1. PYTHON MCP (ForexFactory & Sentiment)
+  // 1. PYTHON MCP (ForexFactory & Sentiment) - This part will still be attempted every time
   try {
     const ffResponse = await axios.get(`${pyBackendUrl}/news/forexfactory`, {
       timeout: 8000,
     });
-    const events = ffResponse.data.events || [];
-
-    for (const ev of events) {
-      if (ev.currency === "USD" && ev.impact === "HIGH") {
-        // Simple time matching: we assume the Python MCP filters for TODAY.
-        // For real trading, parsing the precise time is needed. Here we check if it says "now" or relative.
-        // If the MCP returns it, we treat it as highly relevant today.
-        // We will just do a simplified check to avoid heavy dependencies in parsing relative time for now
-        // Let's assume if it's there and we want to block safely we warn, or we parse.
-        // Actually, let's keep the block safe if there's any HIGH impact USD today
-        // in an actual algorithm you'd parse `ev.time`, but for now we log it.
-        // Let's connect to the JSON directly to get diffMinutes if Python doesn't provide exact timestamp
-      }
-    }
+    // Note: The original logic for this section was incomplete.
+    // If the Python service is ever restored, this part may need implementation.
   } catch (err: any) {
     console.warn("Python MCP ForexFactory failed:", err.message);
   }
 
-  // 1b. FOREXFACTORY SCRAPING (JSON Direct Fallback)
+  // 1b. FOREXFACTORY JSON DIRECT (WITH CACHING)
   try {
-    const ffJson = await axios.get(
-      "https://nfs.faireconomy.media/ff_calendar_thisweek.json",
-      { timeout: 10000 },
-    );
-    const events = ffJson.data as Array<{
-      title: string;
-      country: string;
-      date: string;
-      impact: string;
-    }>;
+    // Use cache if it's recent
+    if (nowMs - cacheTimestamp < CACHE_DURATION_MS && cachedEvents.length > 0) {
+        // Using cached data
+    } else {
+        const ffJson = await axios.get(
+            "https://nfs.faireconomy.media/ff_calendar_thisweek.json",
+            { timeout: 10000 },
+        );
+        cachedEvents = ffJson.data as Array<any>;
+        cacheTimestamp = nowMs;
+        console.log("[NEWS_ENGINE] Refreshed ForexFactory event cache.");
+    }
 
-    for (const ev of events) {
+    for (const ev of cachedEvents) {
       if (ev.country === "USD" && ev.impact === "High") {
         const evTime = new Date(ev.date).getTime();
         const diffMinutes = (evTime - nowMs) / (1000 * 60);
@@ -63,6 +59,7 @@ export async function checkNewsBlock(): Promise<{
     }
   } catch (e: any) {
     console.warn("ForexFactory JSON fetch failed: " + e.message);
+    // If the fetch fails, we will rely on the (potentially stale) cache and other news sources
   }
 
   // 2. NEWSAPI FALLBACK
