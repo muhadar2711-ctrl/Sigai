@@ -4,12 +4,14 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "ts-node-dev --respawn --transpile-only --exit-child server.ts",
+    "dev": "concurrently \"npm:dev:client\" \"npm:dev:server\"",
+    "dev:client": "vite",
+    "dev:server": "ts-node-dev --respawn --transpile-only --exit-child server.ts",
     "clean": "rimraf dist",
     "build:client": "vite build",
     "build:server": "tsc -p tsconfig.server.json",
-    "build": "npm run build:client && npm run build:server",
-    "start": "node dist/server.js",
+    "build": "npm run clean && npm run build:client && npm run build:server",
+    "start": "node dist/server/server.js",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -53,6 +55,7 @@
     "@typescript-eslint/parser": "7.18.0",
     "@vitejs/plugin-react": "4.3.0",
     "autoprefixer": "10.4.19",
+    "concurrently": "^8.2.2",
     "eslint": "8.57.1",
     "eslint-plugin-react-hooks": "4.6.2",
     "eslint-plugin-react-refresh": "0.4.26",

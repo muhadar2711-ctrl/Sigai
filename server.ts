@@ -3,13 +3,12 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import cors from 'cors';
-import axios from 'axios'; // Impor axios
-import { createServer as createViteServer } from 'vite';
-import { initializeEngines } from './server/engine.js';
-import { aiRouter } from './server/ai_engine.js';
-import { EAWebhookBridge } from './server/execution/ea_webhook.js';
+import axios from 'axios';
+import { initializeEngines } from './server/engine';
+import { aiRouter } from './server/ai_engine';
+import { EAWebhookBridge } from './server/execution/ea_webhook';
 
-// Implementasi queryMCPServer yang hilang
+// Fungsi untuk query ke MCP Server
 async function queryMCPServer(endpoint: string) {
   const MCP_SERVER_URL = process.env.MCP_SERVER_URL;
   if (!MCP_SERVER_URL) {
@@ -22,6 +21,7 @@ async function queryMCPServer(endpoint: string) {
 async function startServer() {
   const app = express();
   const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+  const __dirname = path.dirname(new URL(import.meta.url).pathname);
 
   // --- Direktori Struktural ---
   try {
@@ -29,48 +29,31 @@ async function startServer() {
     const dataDir = path.join(process.cwd(), 'data');
     if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
     if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-    const aiLogFile = path.join(logsDir, 'ai.log');
-    if (!fs.existsSync(aiLogFile)) fs.writeFileSync(aiLogFile, '', 'utf-8');
   } catch (e) {
     console.error('Gagal membuat direktori struktural:', e);
   }
 
-  // --- Health Check Endpoint ---
-  app.get('/health', (req, res) => {
-    res.status(200).send('OK');
-  });
-
+  // --- Middleware ---
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ limit: '50mb', extended: true }));
-
-  // --- CORS ---
   app.use(
     cors({
       origin: process.env.FRONTEND_URL || '*',
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-      allowedHeaders: [
-        'Content-Type',
-        'Authorization',
-        'x-admin-token',
-        'x-grok-key',
-        'x-webhook-token',
-      ],
+      allowedHeaders: ['Content-Type', 'Authorization', 'x-admin-token', 'x-grok-key', 'x-webhook-token'],
     }),
   );
 
-  // --- Rute API Inti ---
+  // --- Rute API ---
+  app.get('/health', (req, res) => res.status(200).send('OK'));
   app.use('/api/ai', aiRouter);
 
-  // --- Rute Status MCP (Kontrak Baru) ---
   app.get('/api/mcp/status', async (req, res) => {
     try {
-      // Panggil endpoint status terpusat di backend M
       const response = await queryMCPServer('/api/v1/status');
-      // Pastikan backend Sigai meneruskan data mentah dari M
       res.json(response);
     } catch (error: any) {
-      console.error('[MCP Status] Gagal mengambil status dari server M:', error.message);
-      // Kirim error yang jelas ke frontend
+      console.error('[MCP Status] Gagal mengambil status:', error.message);
       res.status(503).json({ 
         status: 'UNAVAILABLE', 
         error: 'Tidak dapat terhubung ke MCP server.',
@@ -79,13 +62,10 @@ async function startServer() {
     }
   });
 
-  // --- Rute Eksekusi Perdagangan (Kontrak Baru) ---
   app.post('/api/v1/trade/execute', async (req, res) => {
     try {
-      const signal = req.body;
       const bridge = new EAWebhookBridge();
-      // Validasi sinyal di sini jika perlu
-      const result = await bridge.send_signal(signal);
+      const result = await bridge.send_signal(req.body);
       res.status(200).json({ success: true, data: result });
     } catch (error: any) {
       console.error('[Trade Execute] Gagal meneruskan sinyal:', error);
@@ -93,27 +73,22 @@ async function startServer() {
     }
   });
 
-
   // --- Inisialisasi Mesin ---
   initializeEngines();
 
-  // --- Vite & Static Server ---
-  if (process.env.NODE_ENV !== 'production') {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
-  } else {
-    const buildPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(buildPath));
-    app.use('*', (req, res) => {
-      res.sendFile(path.join(buildPath, 'index.html'));
+  // --- Server untuk File Statis (Hanya di Produksi) ---
+  if (process.env.NODE_ENV === 'production') {
+    const clientBuildPath = path.join(__dirname, 'client');
+    app.use(express.static(clientBuildPath));
+
+    // Fallback ke index.html untuk Single Page Application
+    app.get('*', (req, res) => {
+      res.sendFile(path.join(clientBuildPath, 'index.html'));
     });
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server berjalan di port ${PORT}`);
+    console.log(`Server is running on port ${PORT}`);
   });
 }
 
