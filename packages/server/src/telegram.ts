@@ -1,8 +1,9 @@
+
 import TelegramBot from "node-telegram-bot-api";
 import { addSystemError } from "./services/engine.js";
+import { TradeSignal } from "./strategies/types.js"; // FIX: Import the standardized type
 
 let bot: TelegramBot | null = null;
-
 const telegramDedupeCache: Record<string, number> = {};
 
 interface QueueItem {
@@ -41,8 +42,7 @@ async function processQueue() {
           addSystemError(`Telegram Send Error: ${err.message}`);
         }
       }
-
-      await new Promise((r) => setTimeout(r, 1200)); // ~1 message per second to be safe
+      await new Promise((r) => setTimeout(r, 1200));
     }
   }
 
@@ -66,61 +66,45 @@ export function initTelegram() {
     console.log("No TELEGRAM_BOT_TOKEN. Telegram will not send messages.");
     return;
   }
-
   bot = new TelegramBot(token, { polling: false });
 }
 
-export async function sendTelegramSignal(signal: any, systemState?: any) {
+// REFACTOR: Use strong types and a simplified, standardized message format
+export async function sendTelegramSignal(signal: TradeSignal, systemState?: any) {
   if (!bot) return;
   const chatId = process.env.TELEGRAM_CHAT_ID;
   if (!chatId) return;
 
-  const dedupeKey = `sig_${signal.id}`;
-  if (
-    telegramDedupeCache[dedupeKey] &&
-    Date.now() < telegramDedupeCache[dedupeKey]
-  ) {
+  const dedupeKey = `sig_${signal.symbol}_${signal.entry}_${signal.type}`;
+  if (telegramDedupeCache[dedupeKey] && Date.now() < telegramDedupeCache[dedupeKey]) {
     return;
   }
-  telegramDedupeCache[dedupeKey] = Date.now() + 24 * 3600000; // 24 hours lock for exact signal
+  telegramDedupeCache[dedupeKey] = Date.now() + 24 * 3600000;
 
   const tradeMode = systemState?.autotrade?.tradeMode || "MANUAL";
-  const executionProvider = systemState?.autotrade?.executionProvider || "NONE";
 
   const msg = `
-🚨 <b>SINYAL TRADING BARU</b> 🚨
-<b>Simbol</b>: ${escapeHtml(signal.symbol)} 
-<b>Arah</b>: ${signal.type === "BUY" ? "🟢 BUY" : "🔴 SELL"}
+🚨 <b>SINYAL BARU: ${escapeHtml(signal.strategy)}</b> 🚨
 
-<b>Strategi</b>: ${escapeHtml(signal.strategy || "SMC")}
-<b>Timeframe</b>: ${escapeHtml(signal.timeframe || "M5")}
-<b>Status</b>: ${escapeHtml(signal.status?.replace("_", " "))}
-<b>Harga Entry</b>: ${signal.entry.toFixed(2)}
-<b>Stop Loss (SL)</b>: ${signal.sl.toFixed(2)}
-<b>Take Profit 1</b>: ${signal.tp1.toFixed(2)}
-<b>Take Profit 2</b>: ${signal.tp2.toFixed(2)}
-<b>Take Profit 3</b>: ${signal.tp3 ? signal.tp3.toFixed(2) : "-"}
-<b>Risk Reward (RR)</b>: 1:${signal.rrRatio ? signal.rrRatio.toFixed(1) : "1.7"}
+<b>${signal.type === "BUY" ? "🟢" : "🔴"} ${escapeHtml(signal.symbol)} ${escapeHtml(signal.type)}</b>
 
-<b>Analisis Tambahan</b>:
-- Pips Target (TP1): ${Math.abs(signal.tp1 - signal.entry) * (signal.symbol.includes("XAU") ? 10 : 10000)} Pips
-- ATR: ${signal.atr ? signal.atr.toFixed(2) : "-"} (Pengali: ${signal.atrMultiplier || 1.0}x)
-- Keyakinan (Confidence): ${signal.confidence}%
-- Validasi AI: ${escapeHtml(signal.ai_verdict)}
-- Alasan: ${escapeHtml(signal.ai_reason ? (signal.ai_reason.length > 60 ? signal.ai_reason.slice(0, 60) + "..." : signal.ai_reason) : "-")}
+- <b>Entry</b>: ${signal.entry.toFixed(signal.symbol.includes("XAU") ? 2 : 5)}
+- <b>Stop Loss</b>: ${signal.sl.toFixed(signal.symbol.includes("XAU") ? 2 : 5)}
+- <b>Take Profit</b>: ${signal.tp.toFixed(signal.symbol.includes("XAU") ? 2 : 5)}
+- <b>Risk/Reward</b>: 1:${signal.rrRatio.toFixed(1)}
 
-<b>Sistem</b>:
-- Mode Trade: ${escapeHtml(tradeMode)}
-- Provider: ${escapeHtml(executionProvider)}
-- Waktu: ${escapeHtml(new Date(signal.timestamp).toLocaleString("id-ID", { timeZone: "Asia/Makassar" }))} WITA
+- <b>Keyakinan</b>: ${(signal.confidence * 100).toFixed(0)}%
+- <b>Mode Sistem</b>: ${escapeHtml(tradeMode)}
+- <b>Waktu</b>: ${new Date().toLocaleString("id-ID", { timeZone: "Asia/Makassar" })} WITA
   `.trim();
 
   messageQueue.push({ type: "html", chatId, text: msg });
   processQueue();
 }
 
+// NOTE: This function may also need refactoring if the 'signal' object it receives is not standardized.
 export async function sendTelegramUpdate(
-  signal: any,
+  signal: any, // WARNING: This is still 'any' and a potential point of failure.
   statusType: string,
   pips: number,
 ) {
@@ -128,34 +112,23 @@ export async function sendTelegramUpdate(
   const chatId = process.env.TELEGRAM_CHAT_ID;
   if (!chatId) return;
 
-  const dedupeKey = `upd_${signal.id}_${statusType}`;
-  if (
-    telegramDedupeCache[dedupeKey] &&
-    Date.now() < telegramDedupeCache[dedupeKey]
-  ) {
+  // Using a simple dedupe key for now
+  const dedupeKey = `upd_${signal.id || signal.entry}_${statusType}`;
+  if (telegramDedupeCache[dedupeKey] && Date.now() < telegramDedupeCache[dedupeKey]) {
     return;
   }
   telegramDedupeCache[dedupeKey] = Date.now() + 24 * 3600000;
 
   let header = "";
   if (statusType === "TP1_HIT") header = "✅ <b>TAKE PROFIT 1 TERCAPAI</b> ✅";
-  else if (statusType === "TP2_HIT")
-    header = "🚀 <b>TAKE PROFIT 2 TERCAPAI</b> 🚀";
-  else if (statusType === "TP3_HIT")
-    header = "🔥 <b>TAKE PROFIT 3 TERCAPAI (MAX GAIN)</b> 🔥";
-  else if (statusType === "BREAKEVEN")
-    header = "🛡 <b>SL DIPINDAH KE BREAKEVEN</b> 🛡";
+  else if (statusType === "BREAKEVEN") header = "🛡 <b>SL DIPINDAH KE BREAKEVEN</b> 🛡";
   else if (statusType === "SL_HIT") header = "❌ <b>STOP LOSS TERCAPAI</b> ❌";
-  else if (statusType === "INVALIDATED")
-    header = "⚠️ <b>SINYAL DIBATALKAN (INVALID)</b> ⚠️";
-  else if (statusType === "EXPIRED") header = "⏳ <b>SINYAL KEDALUWARSA</b> ⏳";
-  else header = "ℹ️ <b>UPDATE SINYAL</b> ℹ️";
+  else if (statusType === "INVALIDATED") header = "⚠️ <b>SINYAL DIBATALKAN</b> ⚠️";
+  else header = `ℹ️ <b>UPDATE: ${statusType.replace("_"," ")}</b> ℹ️`;
 
   const msg = `
 ${header}
 <b>Simbol</b>: ${escapeHtml(signal.symbol)} (${signal.type})
-<b>Strategi</b>: ${escapeHtml(signal.strategy || "SMC")}
-<b>Status Saat Ini</b>: ${escapeHtml(statusType.replace("_", " "))}
 <b>Pips Berjalan</b>: ${pips > 0 ? "+" : ""}${pips.toFixed(1)} Pips
 <b>Harga Terkini</b>: ${signal.lastPrice ? signal.lastPrice.toFixed(2) : "-"}
   `.trim();
@@ -169,14 +142,8 @@ export async function sendTelegramMessage(text: string) {
   const chatId = process.env.TELEGRAM_CHAT_ID;
   if (!chatId) return;
 
-  const dedupeKey = `msg_${text.slice(0, 50)}`;
-  if (
-    telegramDedupeCache[dedupeKey] &&
-    Date.now() < telegramDedupeCache[dedupeKey]
-  ) {
-    return;
-  }
-  telegramDedupeCache[dedupeKey] = Date.now() + 4 * 3600000; // 4 hours for simple messages/errors
+  const dedupeKey = `msg_${text.slice(0, 50)}_${Date.now()}`;
+  telegramDedupeCache[dedupeKey] = Date.now() + 4 * 3600000;
 
   messageQueue.push({ type: "text", chatId, text });
   processQueue();
