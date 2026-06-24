@@ -21,7 +21,6 @@ async function queryMCPServer(endpoint: string) {
 async function startServer() {
   const app = express();
   const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3001;
-  const __dirname = path.dirname(new URL(import.meta.url).pathname);
 
   // --- Direktori Struktural ---
   try {
@@ -78,7 +77,7 @@ async function startServer() {
 
   // --- Server untuk File Statis (Hanya di Produksi) ---
   if (process.env.NODE_ENV === 'production') {
-    const clientBuildPath = path.resolve(__dirname, '../../dist/client'); // Corrected path
+    const clientBuildPath = path.join(process.cwd(), 'packages/client/dist');
     app.use(express.static(clientBuildPath));
 
     // Fallback ke index.html untuk Single Page Application
