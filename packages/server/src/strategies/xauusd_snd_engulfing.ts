@@ -1,7 +1,7 @@
-import { OHLC, fetchMarketData } from "../../services/data_engine.js";
-import { calculateSMA, calculateATR } from "../../indicators.js";
-import { analyzeStructure, detectFVG } from "../smc_strategy.js";
-import { systemState, getCurrentKillzone } from "../../services/engine.js";
+import { OHLC, fetchMarketData } from "../services/data_engine.js";
+import { calculateSMA, calculateATR } from "../indicators.js";
+import { analyzeStructure, detectFVG } from "./smc_strategy.js";
+import { systemState, getCurrentKillzone } from "../services/engine.js";
 
 // Helper to find areas of interest on H1
 function findSnDAreas(candles: OHLC[], trend: "UPTREND" | "DOWNTREND") {

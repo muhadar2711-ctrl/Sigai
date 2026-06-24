@@ -1,7 +1,7 @@
-import { OHLC, fetchMarketData } from "../../services/data_engine.js";
-import { calculateEMA, calculateRSI, calculateATR } from "../../indicators.js";
-import { detectFVG, analyzeStructure } from "../smc_strategy.js";
-import { systemState, getCurrentKillzone } from "../../services/engine.js";
+import { OHLC, fetchMarketData } from "../services/data_engine.js";
+import { calculateEMA, calculateRSI, calculateATR } from "../indicators.js";
+import { detectFVG, analyzeStructure } from "./smc_strategy.js";
+import { systemState, getCurrentKillzone } from "../services/engine.js";
 
 export async function runXauUsdSMCV3(symbol: string = "XAU/USD") {
   const strategyKey = `smc_v3_${symbol}`;
