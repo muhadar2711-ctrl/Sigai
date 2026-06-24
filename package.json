@@ -1,18 +1,21 @@
 {
-  "name": "sigai-main",
+  "name": "sigai-main-monorepo",
   "private": true,
   "version": "1.0.0",
   "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "dev": "concurrently \"npm:dev:client\" \"npm:dev:server\"",
-    "dev:client": "vite",
-    "dev:server": "ts-node-dev --respawn --transpile-only --exit-child server.ts",
-    "clean": "rimraf dist",
-    "build:client": "vite build",
-    "build:server": "tsc -p tsconfig.server.json",
+    "dev:client": "cd packages/client && vite",
+    "dev:server": "ts-node-dev --respawn --transpile-only --exit-child packages/server/src/server.ts",
+    "clean": "rimraf packages/client/dist packages/server/dist",
+    "build:client": "cd packages/client && vite build",
+    "build:server": "tsc -p packages/server/tsconfig.json",
     "build": "npm run clean && npm run build:client && npm run build:server",
-    "start": "node dist/server/server.js",
-    "preview": "vite preview"
+    "start": "node packages/server/dist/server.js",
+    "preview": "cd packages/client && vite preview"
   },
   "dependencies": {
     "@google/generative-ai": "0.11.5",
@@ -36,7 +39,7 @@
     "recharts": "^3.8.1",
     "sqlite3": "^6.0.1",
     "tailwind-merge": "^3.6.0",
-    "ws": "^8.21.0",
+    "ws": "^8.21.1",
     "yahoo-finance2": "^3.15.3"
   },
   "devDependencies": {

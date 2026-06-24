@@ -3,37 +3,39 @@ import path from 'path';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
+  root: __dirname, // Set the project root to packages/client
   plugins: [
     react(),
-    // Tailwind v4 integration via vite plugin if available
     (() => {
       try {
         const tailwind = require('@tailwindcss/vite');
         return tailwind.default ? tailwind.default() : tailwind();
       } catch (e) {
+        console.error('Tailwind CSS plugin not found, skipping.');
         return null;
       }
-    })()
+    })(),
   ].filter(Boolean),
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src'),
+      '@': path.resolve(__dirname, 'src'),
     },
   },
   build: {
-    outDir: 'dist/client',
+    // Output to dist/client relative to the project root
+    outDir: '../../dist/client',
     emptyOutDir: true,
-    target: 'esnext',
+    sourcemap: true,
   },
   server: {
+    port: 5173, // Default Vite port
     proxy: {
+      // Proxy API requests to the backend server
       '/api': {
-        target: 'http://localhost:3000',
+        target: 'http://localhost:3001', // The backend server port
         changeOrigin: true,
         secure: false,
       },
     },
-    hmr: process.env.DISABLE_HMR !== 'true',
-    watch: process.env.DISABLE_HMR === 'true' ? null : {},
   },
 });
