@@ -14,7 +14,7 @@ import { initialize_SMC_V1, execute_SMC_V1 } from "../strategies/smc_v1.js";
 import { initialize_XAUUSD_SND_ENGULFING, execute_XAUUSD_SND_ENGULFING } from "../strategies/xauusd_snd_engulfing.js";
 
 import { StrategyState, TradeSignal, Killzone } from "../strategies/types.js";
-import { systemState, addSystemError } from "../state/state_manager.js";
+import { systemState, addSystemError } from "../state/state_manager.js"; // Corrected Import
 
 let isInitialized = false;
 let isSystemLocked = false;
@@ -33,15 +33,14 @@ export async function bootstrapSystem() {
     initializeEngines();
     isInitialized = true;
     console.log(`[${new Date().toISOString()}] [BOOTSTRAP] System Integrated & State-Driven Pipeline Online.`);
-  } catch (e) {
+  } catch (e:any) {
     console.error(`[${new Date().toISOString()}] [BOOTSTRAP FATAL]`, e);
-    addSystemError("BOOTSTRAP_FATAL", e);
+    addSystemError("BOOTSTRAP_FATAL", {error: e.message});
   }
 }
 
 export function initializeEngines() {
   try {
-    // Initialize All Strategies
     systemState.strategies["XAUUSD_SMC_V3"] = initialize_XAUUSD_SMC_V3();
     systemState.strategies["LONDON_M15_SMC"] = initialize_LONDON_M15_SMC();
     systemState.strategies["SMC_V1"] = initialize_SMC_V1();
@@ -60,7 +59,6 @@ export function initializeEngines() {
         systemState.lastScan = new Date();
         systemState.market_context.killzone = getCurrentKillzone();
 
-        // Execute all enabled strategies
         const signalPromises = [
             execute_XAUUSD_SMC_V3(),
             execute_LONDON_M15_SMC(),
@@ -83,8 +81,8 @@ export function initializeEngines() {
       }
     });
 
-  } catch (error) {
-    addSystemError('ENGINE_INITIALIZATION_FAILED', { error });
+  } catch (error: any) {
+    addSystemError('ENGINE_INITIALIZATION_FAILED', { error: error.message });
   }
 }
 
@@ -133,7 +131,7 @@ async function saveSignalToHistoryAndDB(signal: any) {
     db.prepare(`INSERT INTO signals (id, symbol, type, status, strategy, timestamp, entry, sl, tp, rrRatio, confidence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
       signal.id, signal.symbol, signal.type, signal.status, signal.strategy, signal.timestamp, signal.entry, signal.sl, signal.tp, signal.rrRatio, signal.confidence
     );
-  } catch (e) {
-    addSystemError("SAVE_TO_SQLITE_FAILED", { error: e, signalId: signal.id });
+  } catch (e: any) {
+    addSystemError("SAVE_TO_SQLITE_FAILED", { error: e.message, signalId: signal.id });
   }
 }
