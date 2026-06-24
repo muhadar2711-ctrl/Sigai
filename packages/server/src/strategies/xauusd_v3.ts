@@ -1,11 +1,12 @@
 
-import { systemState } from "../state/state_manager.js";
-import { fetchMarketData, OHLC } from "../services/data_engine.js";
+import { systemState } from "./state/state_manager.js";
+import { fetchMarketData, OHLC } from "./services/data_engine.js";
 import {
   calculateEMA,
   detectFVG,
   analyzeStructure,
-} from "../lib/indicators/smc.js";
+  SMCAnalysis,
+} from "./lib/indicators/smc.js";
 import {
   StrategyStatus,
   MarketBias,
@@ -14,9 +15,9 @@ import {
   StrategyState,
   StrategyConfig,
   Killzone,
-} from "./types.js";
+  FVG,
+} from "./strategies/types.js";
 
-// --- CONFIGURATION ---
 const config: StrategyConfig = {
   symbol: "XAU/USD",
   htfTimeframe: "15m",
@@ -24,13 +25,12 @@ const config: StrategyConfig = {
   htfLookback: 200,
   ltfLookback: 100,
   smcLookback: 15,
-  slOffset: 0.5, // Pips to add/subtract from SL for safety
-  rrRatio: 3, // Risk-to-Reward Ratio (e.g., 3 means 1:3 RR)
+  slOffset: 0.5,
+  rrRatio: 3,
 };
 
 const strategyKey = "XAUUSD_SMC_V3";
 
-// --- STRATEGY INITIALIZATION ---
 export function initialize_XAUUSD_SMC_V3(): StrategyState {
   return {
     name: "SMC Scalping V3",
@@ -50,38 +50,27 @@ export function initialize_XAUUSD_SMC_V3(): StrategyState {
   };
 }
 
-// --- CORE STRATEGY LOGIC ---
 export async function execute_XAUUSD_SMC_V3(): Promise<TradeSignal | null> {
   const state = systemState.strategies[strategyKey];
   if (!state || !state.enabled) {
     return null;
   }
 
-  // Reset state for new tick
   state.status = StrategyStatus.SCANNING;
   state.debugAudit = {};
   let signal: TradeSignal | null = null;
 
   try {
-    // === STEP 1: KILLZONE FILTER ===
-    const killzone: Killzone = systemState.market_context.killzone; // Assume this is populated by another service
+    const killzone: Killzone = systemState.market_context.killzone;
     state.setupState.step1_Killzone = { ...killzone, valid: false };
-    if (
-      !killzone.active ||
-      (killzone.session !== "London" && killzone.session !== "New York")
-    ) {
+    if (!killzone.active || (killzone.session !== "London" && killzone.session !== "New York")) {
       state.status = StrategyStatus.IDLE;
       state.debugAudit.idle_reason = "Awaiting London/NY Killzone";
       return null;
     }
     state.setupState.step1_Killzone.valid = true;
 
-    // === STEP 2: HIGHER TIMEFRAME (HTF) BIAS ===
-    const m15Data = await fetchMarketData(
-      config.symbol,
-      config.htfTimeframe,
-      config.htfLookback
-    );
+    const m15Data = await fetchMarketData(config.symbol, config.htfTimeframe, config.htfLookback);
     if (m15Data.length < config.htfLookback) {
       state.status = StrategyStatus.ERROR;
       state.debugAudit.error = `Not enough HTF data (${m15Data.length}/${config.htfLookback})`;
@@ -93,22 +82,16 @@ export async function execute_XAUUSD_SMC_V3(): Promise<TradeSignal | null> {
     const htfBias = latest_price_m15 > latest_ema200 ? MarketBias.BULLISH : MarketBias.BEARISH;
     state.setupState.step2_HTFBias = htfBias;
 
-    // === STEP 3: LIQUIDITY SWEEP & STRUCTURE SHIFT (LTF) ===
-    const m1Data = await fetchMarketData(
-      config.symbol,
-      config.ltfTimeframe,
-      config.ltfLookback
-    );
+    const m1Data = await fetchMarketData(config.symbol, config.ltfTimeframe, config.ltfLookback);
     if (m1Data.length < config.ltfLookback) {
       state.status = StrategyStatus.ERROR;
       state.debugAudit.error = `Not enough LTF data (${m1Data.length}/${config.ltfLookback})`;
       return null;
     }
 
-    const smcAnalysis = analyzeStructure(m1Data, config.smcLookback);
+    const smcAnalysis: SMCAnalysis[] = analyzeStructure(m1Data, config.smcLookback);
     
-    // LOGIC FIX: Find the sequence of events (Sweep -> CHoCH), not simultaneous events
-    const lastSweepIndex = smcAnalysis.slice().reverse().findIndex(s => s.isLiquiditySweep);
+    const lastSweepIndex = smcAnalysis.slice().reverse().findIndex((s: SMCAnalysis) => s.isLiquiditySweep);
     if (lastSweepIndex === -1) {
       state.status = StrategyStatus.SCANNING;
       state.debugAudit.scan_status = "Awaiting Liquidity Sweep";
@@ -118,65 +101,52 @@ export async function execute_XAUUSD_SMC_V3(): Promise<TradeSignal | null> {
     const sweepEvent = smcAnalysis[smcAnalysis.length - 1 - lastSweepIndex];
 
     const subsequentCandles = smcAnalysis.slice(smcAnalysis.length - lastSweepIndex);
-    const chochEvent = subsequentCandles.find(s => s.isChoch);
+    const chochEvent = subsequentCandles.find((s: SMCAnalysis) => s.isChoch);
 
-    // === Bullish Setup ===
     if (htfBias === MarketBias.BULLISH && sweepEvent.sweepSide === 'low' && chochEvent?.chochDirection === 'bullish') {
-        state.setupState.step3_LiquiditySweep = `LOW_SWEEP_CONFIRMED @ ${sweepEvent.candleIndex}`;
-        state.setupState.step4_StructureShift = `BULLISH_CHOCH_CONFIRMED @ ${chochEvent.candleIndex}`;
+        state.setupState.step3_LiquiditySweep = `LOW_SWEEP @ ${sweepEvent.candleIndex}`;
+        state.setupState.step4_StructureShift = `BULLISH_CHOCH @ ${chochEvent.candleIndex}`;
 
-        const fvgs = detectFVG(m1Data.slice(sweepEvent.candleIndex));
-        const bullishFvg = fvgs.find(fvg => fvg.type === 'bullish');
+        const fvgs: FVG[] = detectFVG(m1Data.slice(sweepEvent.candleIndex));
+        const bullishFvg = fvgs.find((fvg: FVG) => fvg.type === 'bullish');
 
         if (bullishFvg) {
             state.setupState.step5_RetestZone = { type: "BULLISH_FVG", zone: bullishFvg.zone };
             const entry = bullishFvg.zone.high;
             const sl = bullishFvg.zone.low - config.slOffset;
             const risk = entry - sl;
-            const tp = entry + (risk * config.rrRatio); // RR Calculation FIX
+            const tp = entry + (risk * config.rrRatio);
             
             signal = {
-                type: SignalType.BUY,
-                entry,
-                sl,
-                tp,
-                strategy: strategyKey,
-                confidence: 0.8,
-                symbol: config.symbol,
-                rrRatio: config.rrRatio // FIX: Ensure rrRatio is included
+                type: SignalType.BUY, entry, sl, tp, 
+                strategy: strategyKey, confidence: 0.8, 
+                symbol: config.symbol, rrRatio: config.rrRatio
             };
         }
     }
 
-    // === Bearish Setup ===
     if (htfBias === MarketBias.BEARISH && sweepEvent.sweepSide === 'high' && chochEvent?.chochDirection === 'bearish') {
-        state.setupState.step3_LiquiditySweep = `HIGH_SWEEP_CONFIRMED @ ${sweepEvent.candleIndex}`;
-        state.setupState.step4_StructureShift = `BEARISH_CHOCH_CONFIRMED @ ${chochEvent.candleIndex}`;
+        state.setupState.step3_LiquiditySweep = `HIGH_SWEEP @ ${sweepEvent.candleIndex}`;
+        state.setupState.step4_StructureShift = `BEARISH_CHOCH @ ${chochEvent.candleIndex}`;
 
-        const fvgs = detectFVG(m1Data.slice(sweepEvent.candleIndex));
-        const bearishFvg = fvgs.find(fvg => fvg.type === 'bearish');
+        const fvgs: FVG[] = detectFVG(m1Data.slice(sweepEvent.candleIndex));
+        const bearishFvg = fvgs.find((fvg: FVG) => fvg.type === 'bearish');
 
         if (bearishFvg) {
             state.setupState.step5_RetestZone = { type: "BEARISH_FVG", zone: bearishFvg.zone };
             const entry = bearishFvg.zone.low;
             const sl = bearishFvg.zone.high + config.slOffset;
             const risk = sl - entry;
-            const tp = entry - (risk * config.rrRatio); // RR Calculation FIX
+            const tp = entry - (risk * config.rrRatio);
 
             signal = {
-                type: SignalType.SELL,
-                entry,
-                sl,
-                tp,
-                strategy: strategyKey,
-                confidence: 0.8,
-                symbol: config.symbol,
-                rrRatio: config.rrRatio // FIX: Ensure rrRatio is included
+                type: SignalType.SELL, entry, sl, tp, 
+                strategy: strategyKey, confidence: 0.8, 
+                symbol: config.symbol, rrRatio: config.rrRatio
             };
         }
     }
 
-    // === FINAL SIGNAL DECISION ===
     if (signal) {
       state.status = StrategyStatus.SIGNAL;
       state.lastSignal = signal;

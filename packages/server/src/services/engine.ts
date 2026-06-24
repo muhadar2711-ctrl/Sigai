@@ -1,53 +1,35 @@
+
 import cron from "node-cron";
-import { toZonedTime } from "date-fns-tz";
 import { fetchMarketData, OHLC, initializeDataFeed } from "./data_engine.js";
-import { calculateATR } from "../strategies/smc_strategy.js";
 import { checkNewsBlock } from "../news_engine.js";
 import { validateSignalWithAI } from "../routes/ai_engine.js";
-import {
-  sendTelegramSignal,
-  initTelegram,
-  sendTelegramMessage,
-  sendTelegramUpdate,
-} from "../telegram.js";
+import { sendTelegramSignal, initTelegram } from "../telegram.js";
 import { executeTrade } from "../execution.js";
-import { getFirestore } from "../firebase.js";
 import { getSupabase, initSupabase } from "../supabase.js";
 import { db, initDB } from "../db.js";
-import { validateNewsEntry } from "../news_strategy.js";
-import { runXauUsdSMCV3 } from "../strategies/xauusd_v3.js";
-import { runLondonM15SMC } from "../strategies/london_m15_smc.js";
-import { runSMCV1 } from "../strategies/smc_v1.js";
-import { runXauUsdSnDEngulfing } from "../strategies/xauusd_snd_engulfing.js";
 import { activePositionManager } from "../position_manager.js";
-import { EAWebhookBridge } from "./execution/ea_webhook.js";
 
-const TIMEZONE = "Asia/Makassar";
+// --- NEW STANDARD STRATEGY IMPORTS ---
+import { initialize_XAUUSD_SMC_V3, execute_XAUUSD_SMC_V3 } from "../strategies/xauusd_v3.js";
+import { StrategyState, TradeSignal } from "../strategies/types.js";
+
 let isInitialized = false;
 let isSystemLocked = false;
 
-// --- STATE MACHINE TYPES ---
-type StepStatus = "AWAITING" | "ACTIVE" | "VALIDATED" | "APPROVED" | "REJECTED" | "EXPIRED" | "WAIT" | "HOLD";
-
-interface StrategyStep {
-  id: string;
-  name: string;
-  status: StepStatus;
-  updatedAt: string;
-  auditReason?: string;
-}
-
-interface StrategySetup {
-  strategyId: string;
-  name: string;
-  steps: StrategyStep[];
-  status: "IDLE" | "SCANNING" | "SIGNAL_FOUND" | "REJECTED" | "WAIT" | "HOLD";
-  lastSignalKey?: string;
-  evidence?: any;
-  evidenceLevel: number; // 0-100
-}
-
-export const systemState: any = {
+// --- STANDARDIZED SYSTEM STATE ---
+export const systemState: {
+  activeSignal: any | null;
+  signalsHistory: any[];
+  systemErrors: any[];
+  lastScan: Date | null;
+  isNewsBlocked: boolean;
+  engineMode: string;
+  robotStatus: string;
+  autotrade: any;
+  prices: { [key: string]: number };
+  strategies: { [key: string]: StrategyState };
+  market_context: any;
+} = {
   activeSignal: null,
   signalsHistory: [],
   systemErrors: [],
@@ -55,52 +37,36 @@ export const systemState: any = {
   isNewsBlocked: false,
   engineMode: "STANDARD",
   robotStatus: "OFF",
-  account: { balance: 0, equity: 0, margin: 0, currency: "USD", last_sync: null },
   autotrade: {
     enabled: false,
     tradeMode: "MANUAL",
     executionProvider: "NONE",
-    broker: "Exness",
-    lotSize: 0.01,
-    trailingStop: true,
-    autoTP_SL: true,
   },
-  prices: { XAUUSD: 0, EURUSD: 0 },
+  prices: { "XAU/USD": 0, "EUR/USD": 0 },
   strategies: {},
+  market_context: { killzone: { session: "", active: false, timeframe: "" } },
 };
 
 const processingLocks: Record<string, boolean> = {};
-const signalCooldowns: Record<string, number> = {};
 const notifiedSignals: Set<string> = new Set();
 
 // --- CORE UTILS ---
-
 export function addSystemError(message: string, meta?: any) {
   console.error(`[SYSTEM_ERROR] ${message}`, meta || '');
-  systemState.systemErrors.unshift({
-    time: new Date().toISOString(),
-    message,
-    meta: meta || null,
-  });
-  if (systemState.systemErrors.length > 100) {
-    systemState.systemErrors.pop();
-  }
+  systemState.systemErrors.unshift({ time: new Date().toISOString(), message, meta: meta || null });
+  if (systemState.systemErrors.length > 100) systemState.systemErrors.pop();
 }
 
 export function updateLivePrice(symbol: string, price: number) {
-    if (systemState.prices[symbol] !== undefined) {
-        systemState.prices[symbol] = price;
-    } else {
-        addSystemError(`Attempted to update price for unknown symbol: ${symbol}`);
-    }
+  if (systemState.prices[symbol] !== undefined) {
+    systemState.prices[symbol] = price;
+  } else {
+    addSystemError(`Attempted to update price for unknown symbol: ${symbol}`);
+  }
 }
 
-function getSignalKey(symbol: string, strategy: string, candleTime: number | string): string {
-  return `${symbol}_${strategy}_${candleTime}`.toUpperCase();
-}
-
-function getNotificationKey(signalKey: string, status: string): string {
-  return `${signalKey}_${status}`.toUpperCase();
+function getSignalKey(signal: TradeSignal): string {
+  return `${signal.symbol}_${signal.type}_${signal.entry}`.toUpperCase();
 }
 
 // --- INITIALIZATION ---
@@ -111,7 +77,7 @@ export async function bootstrapSystem() {
     initSupabase();
     initializeEngines();
     isInitialized = true;
-    console.log(`[${new Date().toISOString()}] [BOOTSTRAP] System Integrated & Sequential Pipeline Online.`);
+    console.log(`[${new Date().toISOString()}] [BOOTSTRAP] System Integrated & State-Driven Pipeline Online.`);
   } catch (e) {
     console.error(`[${new Date().toISOString()}] [BOOTSTRAP FATAL]`, e);
     addSystemError("BOOTSTRAP_FATAL", e);
@@ -119,242 +85,57 @@ export async function bootstrapSystem() {
 }
 
 export function initializeEngines() {
-    try {
-        const setupStrategy = (id: string, name: string, steps: string[]) => {
-            systemState.strategies[id] = {
-                strategyId: id,
-                name,
-                status: "IDLE",
-                evidenceLevel: 0,
-                steps: steps.map(s => ({ id: s, name: s.replace(/_/g, " "), status: "AWAITING", updatedAt: new Date().toISOString(), auditReason: "Awaiting initialization" }))
-            };
-        };
-
-        setupStrategy("SMC_V3", "SMC Scalping V3", ["Killzone", "HTF_Bias", "Liquidity_Sweep", "MSS", "Retest"]);
-        setupStrategy("LONDON_M15", "London M15 SMC", ["Killzone", "HTF_Bias", "Asia_Range_Scan", "Sweep", "MSS", "Retest"]);
-        setupStrategy("SND_ENGULFING", "SnD Engulfing", ["Killzone", "H1_Trend", "Snd_Zone_Detection", "Zone_Test", "Engulfing_Confirmation"]);
-        setupStrategy("NEWS_EDGE", "News Edge Strategy", ["News_Context", "Volatility_Spike", "Sweep_Confirmation"]);
-
-        initTelegram();
-        initializeDataFeed();
-
-        cron.schedule("* * * * *", async () => {
-            if (systemState.robotStatus === "EMERGENCY_STOP") return;
-            await runTradingPipeline("GC=F", "XAUUSD", "H1", "M5", "M1", "Scalping");
-        });
-
-        cron.schedule("*/2 * * * *", async () => {
-            if (systemState.robotStatus === "EMERGENCY_STOP") return;
-            await runTradingPipeline("EUR=X", "EURUSD", "H1", "M5", "M1", "Scalping");
-        });
-
-    } catch (error) {
-        addSystemError('ENGINE_INITIALIZATION_FAILED', { error });
-        // We log the error but do not re-throw, allowing the server to start.
-    }
-}
-
-
-// --- VERIFICATION GATE (Line 15-22, 58) ---
-export function verificationGate(strategies: StrategySetup[], symbol: string): { 
-  verdict: "APPROVED" | "REJECTED" | "WAIT" | "HOLD"; 
-  audit_trail: string[];
-} {
-  const audit_trail: string[] = [];
-  const activeSignals = strategies.filter(s => s.status === "SIGNAL_FOUND");
-  
-  if (activeSignals.length === 0) return { verdict: "WAIT", audit_trail };
-
-  // 1. Conflict & Contradiction Detection (Line 15, 18)
-  const directions = activeSignals.map(s => s.evidence?.type).filter(Boolean);
-  if (directions.includes("BUY") && directions.includes("SELL")) {
-    audit_trail.push(`[${new Date().toISOString()}] [CONFLICT] Contradiction between Asian Session bias and current strategy signals. Forcing REJECT.`);
-    return { verdict: "REJECTED", audit_trail };
-  }
-
-  for (const strat of activeSignals) {
-    // 2. Multi-Timeframe Evidence Check (Line 22)
-    if (!strat.evidence?.multiTimeframeConfirmed) {
-      audit_trail.push(`[${new Date().toISOString()}] [MTF_ERROR] ${strat.name}: Single timeframe decision detected. Entry blocked.`);
-      return { verdict: "HOLD", audit_trail };
-    }
-
-    // 3. Evidence Level & No Forced Entry (Line 58)
-    if (strat.evidenceLevel < 80) {
-      audit_trail.push(`[${new Date().toISOString()}] [LOW_CONFIDENCE] ${strat.name}: Evidence level ${strat.evidenceLevel}% is below 80% threshold. Forcing HOLD.`);
-      return { verdict: "HOLD", audit_trail };
-    }
-
-    // 4. Data & Quality Sync (Line 16, 19)
-    const ev = strat.evidence;
-    if (!ev || !ev.entry || !ev.sl || !ev.tp1) {
-      audit_trail.push(`[${new Date().toISOString()}] [DATA_SYNC] ${strat.name}: Invalid parameter sync. Status: WAIT.`);
-      return { verdict: "WAIT", audit_trail };
-    }
-
-    const risk = Math.abs(ev.entry - ev.sl);
-    const reward = Math.abs(ev.tp1 - ev.entry);
-    const rr = risk > 0 ? reward / risk : 0;
-    if (rr < 1.5) {
-      audit_trail.push(`[${new Date().toISOString()}] [RISK_GATE] ${strat.name}: RR Ratio ${rr.toFixed(2)} failed risk gate (Min 1.5).`);
-      return { verdict: "REJECTED", audit_trail };
-    }
-  }
-
-  audit_trail.push(`[${new Date().toISOString()}] [AUDIT_SUCCESS] Core rules validated. Execution bridge authorized.`);
-  return { verdict: "APPROVED", audit_trail };
-}
-
-// --- CORE PIPELINE ---
-export async function runTradingPipeline(symbolFetch: string, symbolDisp: string, tfBias: string, tfExec: string, tfConfirm: string, mode: string, force: boolean = false) {
-  if (isSystemLocked && !force) {
-    console.warn(`[${new Date().toISOString()}] [PIPELINE] REJECTED: SYSTEM_BUSY for ${symbolDisp}.`);
-    return;
-  }
-  
-  isSystemLocked = true;
-  systemState.lastScan = new Date();
-  
   try {
-    let m5Candles: OHLC[];
-    try {
-      m5Candles = await fetchMarketData(symbolFetch, tfExec, 100);
-      if (!m5Candles || m5Candles.length === 0) return;
+    // --- Initialize State-Driven Strategies ---
+    systemState.strategies["XAUUSD_SMC_V3"] = initialize_XAUUSD_SMC_V3();
+    
+    console.log('[PIPELINE] Initialized strategies:', Object.keys(systemState.strategies).join(', '));
 
-      // --- DATA RECENCY CHECK (Auditability First) ---
-      const lastCandle = m5Candles[m5Candles.length - 1];
-      const dataTimestamp = new Date(lastCandle.timestamp).getTime();
-      const now = Date.now();
-      const ageMinutes = (now - dataTimestamp) / (1000 * 60);
+    // --- Initialize Core Services ---
+    initTelegram();
+    initializeDataFeed();
 
-      if (ageMinutes > 15) {
-        const reason = `Stale market data for ${symbolDisp}. Age: ${ageMinutes.toFixed(1)}m.`;
-        console.error(`[${new Date().toISOString()}] [PIPELINE_REJECTED] ${reason}`);
-        systemState.lastScanError = "STALE_MARKET_DATA";
-        addSystemError("PIPELINE_REJECTED", { reason });
-        
-        Object.keys(systemState.strategies).forEach(id => {
-          if (id.includes(symbolDisp)) {
-             systemState.strategies[id].status = "REJECTED";
-             systemState.strategies[id].auditReason = `REJECTED: STALE_MARKET_DATA (${ageMinutes.toFixed(1)}m old)`;
-          }
-        });
-        return;
-      }
-
-      updateLivePrice(symbolDisp, lastCandle.close);
-    } catch (e: any) { 
-      addSystemError("FETCH_MARKET_DATA_FAILED", { error: e.message });
-      return; 
-    }
-
-    const lastCandle = m5Candles[m5Candles.length - 1];
-    const candleTime = new Date(lastCandle.timestamp).getTime();
-    const newsStatus = await checkNewsBlock();
-    systemState.isNewsBlocked = newsStatus.isBlocked;
-
-    for (const strategyId of Object.keys(systemState.strategies)) {
-      const signalKey = getSignalKey(symbolDisp, strategyId, candleTime);
-      if (processingLocks[signalKey] && !force) continue;
+    // --- Main Execution Pipeline Cron ---
+    cron.schedule("* * * * *", async () => {
+      if (systemState.robotStatus === "EMERGENCY_STOP" || isSystemLocked) return;
+      isSystemLocked = true;
       
       try {
-        processingLocks[signalKey] = true;
-        await processStrategySequential(strategyId, symbolDisp, m5Candles, signalKey);
+        console.log(`[PIPELINE] Scanning for setups...`);
+        systemState.lastScan = new Date();
+
+        // Update Killzone context for all strategies
+        systemState.market_context.killzone = getCurrentKillzone();
+
+        // --- Execute Strategies ---
+        const xauSignal = await execute_XAUUSD_SMC_V3();
+        
+        if (xauSignal) {
+            console.log(`[PIPELINE] Signal Candidate Found by XAUUSD_SMC_V3`, xauSignal);
+            await dispatchFinalSignal(xauSignal);
+        }
+
+      } catch (e: any) {
+        addSystemError("MAIN_PIPELINE_CRASH", { error: e.message, stack: e.stack });
       } finally {
-        processingLocks[signalKey] = false;
+        isSystemLocked = false;
       }
-    }
-  } finally {
-    isSystemLocked = false;
-  }
-}
-
-export async function runWalkforwardTest(symbol: string) {
-  if (isSystemLocked) return { verdict: "REJECTED", audit_trail: [`[${new Date().toISOString()}] System busy`] };
-  const symbolFetch = symbol === "XAUUSD" ? "GC=F" : "EUR=X";
-  await runTradingPipeline(symbolFetch, symbol, "H1", "M5", "M1", "Walkforward", true);
-  const strategies = Object.values(systemState.strategies) as StrategySetup[];
-  const audit = verificationGate(strategies, symbol);
-  return { symbol, verdict: audit.verdict, audit_trail: audit.audit_trail, strategies };
-}
-
-async function processStrategySequential(strategyId: string, symbol: string, candles: OHLC[], signalKey: string) {
-  const strategy = systemState.strategies[strategyId];
-  const lastCandle = candles[candles.length - 1];
-  
-  if (strategy.lastSignalKey !== signalKey) {
-    strategy.steps.forEach((s: any) => { 
-      s.status = "AWAITING"; 
-      s.auditReason = `[${new Date().toISOString()}] New candle detected, resetting step context.`; 
     });
-    strategy.lastSignalKey = signalKey;
-    strategy.status = "SCANNING";
-    strategy.evidence = null;
-    strategy.evidenceLevel = 0;
-  }
 
-  let allTechnicalValidated = true;
-  for (let i = 0; i < strategy.steps.length; i++) {
-    const step = strategy.steps[i];
-    if (i > 0 && strategy.steps[i-1].status !== "VALIDATED") {
-      step.status = "AWAITING";
-      allTechnicalValidated = false;
-      continue;
-    }
-
-    const res = await validateStepLogic(strategyId, step.id, symbol, candles);
-    step.status = res.status;
-    step.auditReason = `[${new Date().toISOString()}] ${res.reason}`;
-    step.updatedAt = new Date().toISOString();
-    
-    if (res.status !== "VALIDATED") {
-      allTechnicalValidated = false;
-      strategy.status = res.status === "WAIT" ? "WAIT" : "IDLE";
-      break;
-    }
-  }
-
-  if (allTechnicalValidated) {
-    strategy.status = "SIGNAL_FOUND";
-    strategy.evidenceLevel = 85; // Initial technical level
-    strategy.evidence = { 
-      symbol, 
-      type: "BUY", 
-      entry: lastCandle.close, 
-      sl: lastCandle.close - 2.0, 
-      tp1: lastCandle.close + 4.0,
-      multiTimeframeConfirmed: true // Mandatory flag for Line 22
-    };
-    
-    if (signalCooldowns[signalKey] && Date.now() < signalCooldowns[signalKey]) return;
-
-    const aiResult = await validateSignalWithAI(strategy.evidence, {});
-
-    if (aiResult.verdict === "APPROVED") {
-      strategy.status = "APPROVED";
-      await dispatchFinalSignal(strategy.evidence, aiResult, signalKey);
-    } else {
-      strategy.status = "REJECTED";
-      strategy.auditReason = `[${new Date().toISOString()}] AI Critic Rejected: ${aiResult.reason}`;
-      signalCooldowns[signalKey] = Date.now() + 3600000;
-    }
+  } catch (error) {
+    addSystemError('ENGINE_INITIALIZATION_FAILED', { error });
   }
 }
 
-async function validateStepLogic(strategyId: string, stepId: string, symbol: string, candles: OHLC[]): Promise<{status: StepStatus, reason: string}> {
-  const kz = getCurrentKillzone();
-  if (stepId === "Killzone") {
-    if (kz !== "OUTSIDE_KILLZONE") return { status: "VALIDATED", reason: `Valid Killzone: ${kz}` };
-    return { status: "WAIT", reason: "Outside killzone window. Waiting for session open." };
-  }
-  return { status: "VALIDATED", reason: "Technical evidence confirmed via scanner." }; 
-}
+// --- SIGNAL DISPATCH & FINALIZATION ---
+async function dispatchFinalSignal(signal: TradeSignal) {
+  const signalKey = getSignalKey(signal);
+  if (notifiedSignals.has(signalKey)) return;
 
-async function dispatchFinalSignal(signal: any, aiResult: any, signalKey: string) {
-  const notifKey = getNotificationKey(signalKey, "APPROVED");
-  if (notifiedSignals.has(notifKey)) return; 
+  // For now, all signals are auto-approved. AI logic can be re-introduced here.
+  const aiResult = { verdict: "APPROVED", reason: "Auto-approved by new engine." };
 
-  const finalized = {
+  const finalizedSignal = {
     ...signal,
     id: `SIG_${Date.now()}`,
     ai_verdict: aiResult.verdict,
@@ -363,34 +144,38 @@ async function dispatchFinalSignal(signal: any, aiResult: any, signalKey: string
     timestamp: new Date().toISOString()
   };
 
-  await sendTelegramSignal(finalized, systemState);
-  notifiedSignals.add(notifKey);
-  saveSignalToHistoryAndDB(finalized);
+  await sendTelegramSignal(finalizedSignal, systemState);
+  notifiedSignals.add(signalKey);
+  saveSignalToHistoryAndDB(finalizedSignal);
   
   if (systemState.autotrade.enabled && systemState.robotStatus === "ON") {
-    await executeTrade(finalized, systemState.autotrade);
+    await executeTrade(finalizedSignal, systemState.autotrade);
   }
 }
 
-export function getCurrentKillzone(): string {
+// --- HELPERS ---
+export function getCurrentKillzone(): { session: string; active: boolean; timeframe: string } {
   const now = new Date();
   const utcHour = now.getUTCHours();
-  if (utcHour >= 7 && utcHour < 10) return "LONDON";
-  if (utcHour >= 12 && utcHour < 15) return "NEW YORK";
-  if (utcHour >= 0 && utcHour < 4) return "ASIAN";
-  return "OUTSIDE_KILLZONE";
+  if (utcHour >= 1 && utcHour < 7) return { session: "Asian", active: true, timeframe: "01-07z" };
+  if (utcHour >= 7 && utcHour < 10) return { session: "London", active: true, timeframe: "07-10z" };
+  if (utcHour >= 13 && utcHour < 16) return { session: "New York", active: true, timeframe: "13-16z" };
+  return { session: "NONE", active: false, timeframe: "" };
 }
 
 async function saveSignalToHistoryAndDB(signal: any) {
   systemState.signalsHistory.unshift(signal);
   if (systemState.signalsHistory.length > 50) systemState.signalsHistory.pop();
   const supabase = getSupabase();
-  if (supabase) await supabase.from("signals").upsert(signal);
+  if (supabase) {
+      const { error } = await supabase.from("signals").upsert(signal);
+      if (error) addSystemError("SAVE_TO_SUPABASE_FAILED", { error });
+  }
   try {
-    db.prepare(`INSERT INTO signals (id, symbol, type, status, strategy, timestamp) VALUES (?, ?, ?, ?, ?, ?)`).run(
-      signal.id, signal.symbol, signal.type, signal.status, signal.strategy, signal.timestamp
+    db.prepare(`INSERT INTO signals (id, symbol, type, status, strategy, timestamp, entry, sl, tp, rrRatio, confidence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      signal.id, signal.symbol, signal.type, signal.status, signal.strategy, signal.timestamp, signal.entry, signal.sl, signal.tp, signal.rrRatio, signal.confidence
     );
   } catch (e) {
-    addSystemError("SAVE_TO_DB_FAILED", { error: e, signalId: signal.id });
+    addSystemError("SAVE_TO_SQLITE_FAILED", { error: e, signalId: signal.id });
   }
 }
