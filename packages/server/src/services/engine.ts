@@ -9,48 +9,17 @@ import { getSupabase, initSupabase } from "../supabase.js";
 import { db, initDB } from "../db.js";
 
 import { initialize_XAUUSD_SMC_V3, execute_XAUUSD_SMC_V3 } from "../strategies/xauusd_v3.js";
-import { StrategyState, TradeSignal } from "../strategies/types.js";
+import { initialize_LONDON_M15_SMC, execute_LONDON_M15_SMC } from "../strategies/london_m15_smc.js";
+import { initialize_SMC_V1, execute_SMC_V1 } from "../strategies/smc_v1.js";
+import { initialize_XAUUSD_SND_ENGULFING, execute_XAUUSD_SND_ENGULFING } from "../strategies/xauusd_snd_engulfing.js";
+
+import { StrategyState, TradeSignal, Killzone } from "../strategies/types.js";
+import { systemState, addSystemError } from "../state/state_manager.js";
 
 let isInitialized = false;
 let isSystemLocked = false;
 
-export const systemState: {
-  activeSignal: any | null;
-  signalsHistory: any[];
-  systemErrors: any[];
-  lastScan: Date | null;
-  isNewsBlocked: boolean;
-  engineMode: string;
-  robotStatus: string;
-  autotrade: any;
-  prices: { [key: string]: number };
-  strategies: { [key: string]: StrategyState };
-  market_context: any;
-} = {
-  activeSignal: null,
-  signalsHistory: [],
-  systemErrors: [],
-  lastScan: null,
-  isNewsBlocked: false,
-  engineMode: "STANDARD",
-  robotStatus: "OFF",
-  autotrade: {
-    enabled: false,
-    tradeMode: "MANUAL",
-    executionProvider: "NONE",
-  },
-  prices: { "XAU/USD": 0, "EUR/USD": 0 },
-  strategies: {},
-  market_context: { killzone: { session: "", active: false, timeframe: "" } },
-};
-
 const notifiedSignals: Set<string> = new Set();
-
-export function addSystemError(message: string, meta?: any) {
-  console.error(`[SYSTEM_ERROR] ${message}`, meta || '');
-  systemState.systemErrors.unshift({ time: new Date().toISOString(), message, meta: meta || null });
-  if (systemState.systemErrors.length > 100) systemState.systemErrors.pop();
-}
 
 function getSignalKey(signal: TradeSignal): string {
   return `${signal.symbol}_${signal.type}_${signal.entry}`.toUpperCase();
@@ -72,7 +41,11 @@ export async function bootstrapSystem() {
 
 export function initializeEngines() {
   try {
+    // Initialize All Strategies
     systemState.strategies["XAUUSD_SMC_V3"] = initialize_XAUUSD_SMC_V3();
+    systemState.strategies["LONDON_M15_SMC"] = initialize_LONDON_M15_SMC();
+    systemState.strategies["SMC_V1"] = initialize_SMC_V1();
+    systemState.strategies["XAUUSD_SND_ENGULFING"] = initialize_XAUUSD_SND_ENGULFING();
     console.log('[PIPELINE] Initialized strategies:', Object.keys(systemState.strategies).join(', '));
 
     initTelegram();
@@ -87,11 +60,20 @@ export function initializeEngines() {
         systemState.lastScan = new Date();
         systemState.market_context.killzone = getCurrentKillzone();
 
-        const xauSignal = await execute_XAUUSD_SMC_V3();
+        // Execute all enabled strategies
+        const signalPromises = [
+            execute_XAUUSD_SMC_V3(),
+            execute_LONDON_M15_SMC(),
+            execute_SMC_V1(),
+            execute_XAUUSD_SND_ENGULFING(),
+        ];
         
-        if (xauSignal) {
-            console.log(`[PIPELINE] Signal Candidate Found by XAUUSD_SMC_V3`, xauSignal);
-            await dispatchFinalSignal(xauSignal);
+        const signals = await Promise.all(signalPromises);
+        const validSignals = signals.filter(s => s !== null) as TradeSignal[];
+
+        for (const signal of validSignals) {
+            console.log(`[PIPELINE] Signal Candidate Found by ${signal.strategy}`, signal);
+            await dispatchFinalSignal(signal);
         }
 
       } catch (e: any) {
@@ -106,14 +88,12 @@ export function initializeEngines() {
   }
 }
 
-// FIX: Changed parameter to be 'TradeSignal' to match the new standardized type
 async function dispatchFinalSignal(signal: TradeSignal) {
   const signalKey = getSignalKey(signal);
   if (notifiedSignals.has(signalKey)) return;
 
-  const aiResult = { verdict: "APPROVED", reason: "Auto-approved by new engine." };
+  const aiResult = { verdict: "APPROVED", reason: "Auto-approved during testing." };
 
-  // FIX: This object is now implicitly a TradeSignal and compatible with saveSignalToHistoryAndDB
   const finalizedSignal = {
     ...signal,
     id: `SIG_${Date.now()}`,
@@ -132,7 +112,7 @@ async function dispatchFinalSignal(signal: TradeSignal) {
   }
 }
 
-export function getCurrentKillzone(): { session: string; active: boolean; timeframe: string } {
+export function getCurrentKillzone(): Killzone {
   const now = new Date();
   const utcHour = now.getUTCHours();
   if (utcHour >= 1 && utcHour < 7) return { session: "Asian", active: true, timeframe: "01-07z" };
@@ -141,8 +121,7 @@ export function getCurrentKillzone(): { session: string; active: boolean; timefr
   return { session: "NONE", active: false, timeframe: "" };
 }
 
-// FIX: The parameter type now matches the standardized TradeSignal, resolving the TS2345 error.
-async function saveSignalToHistoryAndDB(signal: any) { // using 'any' to accommodate extra properties from finalization
+async function saveSignalToHistoryAndDB(signal: any) {
   systemState.signalsHistory.unshift(signal);
   if (systemState.signalsHistory.length > 50) systemState.signalsHistory.pop();
   const supabase = getSupabase();
