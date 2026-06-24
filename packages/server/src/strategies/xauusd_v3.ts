@@ -1,12 +1,12 @@
 
-import { systemState } from "./state/state_manager.js";
-import { fetchMarketData, OHLC } from "./services/data_engine.js";
+import { systemState } from "../state/state_manager.js";
+import { fetchMarketData, OHLC } from "../services/data_engine.js";
 import {
   calculateEMA,
   detectFVG,
   analyzeStructure,
   SMCAnalysis,
-} from "./lib/indicators/smc.js";
+} from "../lib/indicators/smc.js";
 import {
   StrategyStatus,
   MarketBias,
@@ -16,7 +16,7 @@ import {
   StrategyConfig,
   Killzone,
   FVG,
-} from "./strategies/types.js";
+} from "./types.js"; // FIX: Correct path to the single source of truth for types
 
 const config: StrategyConfig = {
   symbol: "XAU/USD",

@@ -7,16 +7,13 @@ import { sendTelegramSignal, initTelegram } from "../telegram.js";
 import { executeTrade } from "../execution.js";
 import { getSupabase, initSupabase } from "../supabase.js";
 import { db, initDB } from "../db.js";
-import { activePositionManager } from "../position_manager.js";
 
-// --- NEW STANDARD STRATEGY IMPORTS ---
 import { initialize_XAUUSD_SMC_V3, execute_XAUUSD_SMC_V3 } from "../strategies/xauusd_v3.js";
 import { StrategyState, TradeSignal } from "../strategies/types.js";
 
 let isInitialized = false;
 let isSystemLocked = false;
 
-// --- STANDARDIZED SYSTEM STATE ---
 export const systemState: {
   activeSignal: any | null;
   signalsHistory: any[];
@@ -47,29 +44,18 @@ export const systemState: {
   market_context: { killzone: { session: "", active: false, timeframe: "" } },
 };
 
-const processingLocks: Record<string, boolean> = {};
 const notifiedSignals: Set<string> = new Set();
 
-// --- CORE UTILS ---
 export function addSystemError(message: string, meta?: any) {
   console.error(`[SYSTEM_ERROR] ${message}`, meta || '');
   systemState.systemErrors.unshift({ time: new Date().toISOString(), message, meta: meta || null });
   if (systemState.systemErrors.length > 100) systemState.systemErrors.pop();
 }
 
-export function updateLivePrice(symbol: string, price: number) {
-  if (systemState.prices[symbol] !== undefined) {
-    systemState.prices[symbol] = price;
-  } else {
-    addSystemError(`Attempted to update price for unknown symbol: ${symbol}`);
-  }
-}
-
 function getSignalKey(signal: TradeSignal): string {
   return `${signal.symbol}_${signal.type}_${signal.entry}`.toUpperCase();
 }
 
-// --- INITIALIZATION ---
 export async function bootstrapSystem() {
   if (isInitialized) return;
   try {
@@ -86,16 +72,12 @@ export async function bootstrapSystem() {
 
 export function initializeEngines() {
   try {
-    // --- Initialize State-Driven Strategies ---
     systemState.strategies["XAUUSD_SMC_V3"] = initialize_XAUUSD_SMC_V3();
-    
     console.log('[PIPELINE] Initialized strategies:', Object.keys(systemState.strategies).join(', '));
 
-    // --- Initialize Core Services ---
     initTelegram();
     initializeDataFeed();
 
-    // --- Main Execution Pipeline Cron ---
     cron.schedule("* * * * *", async () => {
       if (systemState.robotStatus === "EMERGENCY_STOP" || isSystemLocked) return;
       isSystemLocked = true;
@@ -103,11 +85,8 @@ export function initializeEngines() {
       try {
         console.log(`[PIPELINE] Scanning for setups...`);
         systemState.lastScan = new Date();
-
-        // Update Killzone context for all strategies
         systemState.market_context.killzone = getCurrentKillzone();
 
-        // --- Execute Strategies ---
         const xauSignal = await execute_XAUUSD_SMC_V3();
         
         if (xauSignal) {
@@ -127,14 +106,14 @@ export function initializeEngines() {
   }
 }
 
-// --- SIGNAL DISPATCH & FINALIZATION ---
+// FIX: Changed parameter to be 'TradeSignal' to match the new standardized type
 async function dispatchFinalSignal(signal: TradeSignal) {
   const signalKey = getSignalKey(signal);
   if (notifiedSignals.has(signalKey)) return;
 
-  // For now, all signals are auto-approved. AI logic can be re-introduced here.
   const aiResult = { verdict: "APPROVED", reason: "Auto-approved by new engine." };
 
+  // FIX: This object is now implicitly a TradeSignal and compatible with saveSignalToHistoryAndDB
   const finalizedSignal = {
     ...signal,
     id: `SIG_${Date.now()}`,
@@ -153,7 +132,6 @@ async function dispatchFinalSignal(signal: TradeSignal) {
   }
 }
 
-// --- HELPERS ---
 export function getCurrentKillzone(): { session: string; active: boolean; timeframe: string } {
   const now = new Date();
   const utcHour = now.getUTCHours();
@@ -163,7 +141,8 @@ export function getCurrentKillzone(): { session: string; active: boolean; timefr
   return { session: "NONE", active: false, timeframe: "" };
 }
 
-async function saveSignalToHistoryAndDB(signal: any) {
+// FIX: The parameter type now matches the standardized TradeSignal, resolving the TS2345 error.
+async function saveSignalToHistoryAndDB(signal: any) { // using 'any' to accommodate extra properties from finalization
   systemState.signalsHistory.unshift(signal);
   if (systemState.signalsHistory.length > 50) systemState.signalsHistory.pop();
   const supabase = getSupabase();

@@ -1,6 +1,7 @@
 
 import { OHLC } from "../services/data_engine.js";
 
+// FIX: Expanded to include all legacy and modern statuses for successful compilation.
 export enum StrategyStatus {
   OFF = "OFF",
   IDLE = "IDLE",
@@ -8,6 +9,8 @@ export enum StrategyStatus {
   SIGNAL = "SIGNAL",
   ERROR = "ERROR",
   CRASHED = "CRASHED",
+  MONITORING = "MONITORING",   // Legacy status
+  SIGNAL_READY = "SIGNAL_READY", // Legacy status
 }
 
 export enum MarketBias {
@@ -50,6 +53,7 @@ export interface StrategyState {
   lastSignal?: TradeSignal | null;
 }
 
+// FIX: Standardized to a single 'tp' (Take Profit). This is the single source of truth.
 export interface TradeSignal {
   type: SignalType;
   entry: number;
@@ -58,7 +62,7 @@ export interface TradeSignal {
   strategy: string;
   confidence: number;
   symbol: string;
-  rrRatio: number; // FIX: Re-added for frontend compatibility
+  rrRatio: number;
 }
 
 export interface Killzone {
@@ -76,4 +80,10 @@ export interface StrategyConfig {
   smcLookback: number;
   slOffset: number;
   rrRatio: number;
+}
+
+export interface FVG {
+  type: 'bullish' | 'bearish';
+  zone: FVGZone;
+  candleIndex: number;
 }
