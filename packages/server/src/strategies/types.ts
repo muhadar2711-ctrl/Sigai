@@ -58,6 +58,7 @@ export interface TradeSignal {
   strategy: string;
   confidence: number;
   symbol: string;
+  rrRatio: number; // FIX: Re-added for frontend compatibility
 }
 
 export interface Killzone {

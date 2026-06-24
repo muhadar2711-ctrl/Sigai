@@ -1,3 +1,4 @@
+
 tsx
 import React, { useEffect, useState } from "react";
 import {
@@ -165,6 +166,7 @@ export function Dashboard() {
       )}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {/* ... Cards for Risk Mode, Live Prices etc. - No changes needed here ... */}
         <Card className={cn("h-20 flex flex-col justify-between p-3.5 shadow-sm transition-all", status?.engineMode === "NEWS" ? "border-brand-warning/40 bg-brand-warning/5" : "border-brand-success/20 hover:border-brand-success/40")}>
           <div className="flex justify-between items-center text-brand-text-sec">
             <div className="text-[9px] font-bold uppercase tracking-widest flex items-center gap-1.5 opacity-90">Risk Mode</div>
@@ -218,10 +220,29 @@ export function Dashboard() {
                   <div className="text-[10px] font-bold text-brand-accent uppercase tracking-tighter">{strat.name}</div>
                   <Badge className="text-[8px] font-mono py-0 uppercase">{strat.status}</Badge>
                 </div>
+                {/* FIX: Access performance data from strat.performance */}
+                <div className="grid grid-cols-4 gap-2 text-center border-t border-b border-brand-border/30 py-3 my-3">
+                    <div>
+                        <div className="text-[9px] text-brand-text-sec uppercase">Trades</div>
+                        <div className="font-mono text-sm font-bold">{strat.performance?.dailyTrades ?? 0}</div>
+                    </div>
+                    <div>
+                        <div className="text-[9px] text-brand-text-sec uppercase">Winrate</div>
+                        <div className="font-mono text-sm font-bold">{strat.performance?.winrate?.toFixed(0) ?? 0}%</div>
+                    </div>
+                    <div>
+                        <div className="text-[9px] text-brand-text-sec uppercase">Wins</div>
+                        <div className="font-mono text-sm font-bold text-brand-success">{strat.performance?.wins ?? 0}</div>
+                    </div>
+                    <div>
+                        <div className="text-[9px] text-brand-text-sec uppercase">Losses</div>
+                        <div className="font-mono text-sm font-bold text-brand-danger">{strat.performance?.losses ?? 0}</div>
+                    </div>
+                </div>
                 <div className="flex flex-wrap items-center gap-2">
                   {strat.setupState && Object.entries(strat.setupState).map(([stepKey, stepStatus]: [string, any], idx) => (
                     <React.Fragment key={stepKey}>
-                      <div className={cn("text-[9px] px-2 py-1 rounded border font-mono font-bold transition-all duration-500", getStepColor(stepStatus))}>
+                      <div className={cn("text-[9px] px-2 py-1 rounded border font-mono font-bold transition-all duration-500", getStepColor(stepStatus?.valid ? "VALIDATED" : "AWAITING"))}>
                         {stepKey.replace(/step\d+_/, "").replace(/_/g, " ")}
                       </div>
                       {idx < Object.entries(strat.setupState).length - 1 && (
@@ -292,10 +313,12 @@ export function Dashboard() {
               </div>
               <div className="flex flex-col bg-brand-bg-sec/80 p-2 text-center">
                 <span className="text-[9px] text-brand-text-sec font-semibold uppercase mb-1">TP</span>
-                <span className="text-xs font-mono text-brand-success">{latest.tp1?.toFixed(2)}</span>
+                {/* FIX: Use `tp` instead of `tp1` */}
+                <span className="text-xs font-mono text-brand-success">{latest.tp?.toFixed(2)}</span>
               </div>
               <div className="flex flex-col bg-brand-bg-sec/80 p-2 text-center">
                 <span className="text-[9px] text-brand-text-sec font-semibold uppercase mb-1">RR</span>
+                {/* FIX: Use `rrRatio` */}
                 <span className="text-xs font-mono text-brand-info">1:{latest.rrRatio?.toFixed(1) || "-"}</span>
               </div>
             </div>
@@ -306,7 +329,8 @@ export function Dashboard() {
                 IDEMPOTENCY_KEY: {latest.id || "NULL_ID"}
               </div>
               <div className="text-[10px] uppercase font-bold text-brand-text-sec bg-brand-bg px-2.5 py-1 rounded border border-brand-border">
-                AI CONFIDENCE: <span className="text-brand-success ml-1">{latest.confidence}%</span>
+                 {/* FIX: Confidence is now a ratio (0-1), converting to percentage */}
+                AI CONFIDENCE: <span className="text-brand-success ml-1">{(latest.confidence * 100)?.toFixed(0) ?? 0}%</span>
               </div>
             </div>
           </Card>
@@ -323,3 +347,4 @@ export function Dashboard() {
     </div>
   );
 }
+

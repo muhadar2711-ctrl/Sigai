@@ -142,7 +142,8 @@ export async function execute_XAUUSD_SMC_V3(): Promise<TradeSignal | null> {
                 tp,
                 strategy: strategyKey,
                 confidence: 0.8,
-                symbol: config.symbol
+                symbol: config.symbol,
+                rrRatio: config.rrRatio // FIX: Ensure rrRatio is included
             };
         }
     }
@@ -169,7 +170,8 @@ export async function execute_XAUUSD_SMC_V3(): Promise<TradeSignal | null> {
                 tp,
                 strategy: strategyKey,
                 confidence: 0.8,
-                symbol: config.symbol
+                symbol: config.symbol,
+                rrRatio: config.rrRatio // FIX: Ensure rrRatio is included
             };
         }
     }
