@@ -1,11 +1,11 @@
-import { OHLC, fetchMarketData } from "../data_engine.js";
+import { OHLC, fetchMarketData } from "../services/data_engine.js";
 import {
   analyzeStructure,
   detectFVG,
   validateEntry,
   calculateATR,
-} from "../smc_strategy.js";
-import { systemState, getCurrentKillzone } from "../engine.js";
+} from "./smc_strategy.js";
+import { systemState, getCurrentKillzone } from "../services/engine.js";
 
 function calculateDynamicATRMultiplier(
   atr: number,
@@ -147,9 +147,9 @@ export async function runSMCV1(symbol: string, m5Candles: OHLC[]) {
       const atr = calculateATR(m5Candles, 14);
 
       let conf = 50;
-      if (standardResult.signalType.structureState?.trend !== "NEUTRAL")
+      if (standardResult.checklist?.bias !== "NEUTRAL")
         conf += 15;
-      if (standardResult.signalType.fvg) conf += 15;
+      if (standardResult.checklist?.fvg) conf += 15;
 
       const atrMult = calculateDynamicATRMultiplier(
         atr,

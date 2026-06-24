@@ -1,4 +1,4 @@
-import { OHLC } from "./data_engine.js";
+import { OHLC } from "../services/data_engine.js";
 
 // Returns High if Swing High, Low if Swing Low, else null
 export function detectSwing(

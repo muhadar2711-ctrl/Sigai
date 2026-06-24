@@ -1,5 +1,5 @@
-import { OHLC } from "./data_engine.js";
-import { calculateATR, calculateFibonacci, detectFVG } from "./smc_strategy.js";
+import { OHLC } from "./services/data_engine.js";
+import { calculateATR, calculateFibonacci, detectFVG } from "./strategies/smc_strategy.js";
 
 interface NewsChecklist {
   volatilitySpike: boolean;

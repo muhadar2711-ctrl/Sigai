@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { systemState } from "./engine.js";
+import { systemState } from "./services/engine.js";
 
 const MEMORY_FILE = path.join(process.cwd(), "data", "ai_memory.json");
 

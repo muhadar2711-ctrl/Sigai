@@ -4,9 +4,9 @@ import path from 'path';
 import fs from 'fs';
 import cors from 'cors';
 import axios from 'axios';
-import { initializeEngines } from './server/engine';
-import { aiRouter } from './server/ai_engine';
-import { EAWebhookBridge } from './server/execution/ea_webhook';
+import { initializeEngines } from './services/engine.js';
+import { aiRouter } from './routes/ai_engine.js';
+import { EAWebhookBridge } from './services/execution/ea_webhook.js';
 
 // Fungsi untuk query ke MCP Server
 async function queryMCPServer(endpoint: string) {
@@ -20,7 +20,7 @@ async function queryMCPServer(endpoint: string) {
 
 async function startServer() {
   const app = express();
-  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3001;
   const __dirname = path.dirname(new URL(import.meta.url).pathname);
 
   // --- Direktori Struktural ---
@@ -78,7 +78,7 @@ async function startServer() {
 
   // --- Server untuk File Statis (Hanya di Produksi) ---
   if (process.env.NODE_ENV === 'production') {
-    const clientBuildPath = path.join(__dirname, 'client');
+    const clientBuildPath = path.resolve(__dirname, '../../dist/client'); // Corrected path
     app.use(express.static(clientBuildPath));
 
     // Fallback ke index.html untuk Single Page Application

@@ -1,12 +1,12 @@
 
 import express from 'express';
-import { systemState } from "./engine.js";
-import { memoryManager } from "./memory.js";
+import { systemState } from "../services/engine.js";
+import { memoryManager } from "../memory.js";
 import {
   validateSignalAdapter,
   chatCompletionFull,
   retrieveKnowledgeContext,
-} from "./services/ai_adapter.js";
+} from "../services/ai_adapter.js";
 
 const router = express.Router();
 

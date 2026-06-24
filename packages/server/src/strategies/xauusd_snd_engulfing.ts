@@ -1,7 +1,7 @@
-import { OHLC, fetchMarketData } from "../data_engine.js";
-import { calculateSMA, calculateATR } from "../indicators.js";
+import { OHLC, fetchMarketData } from "../../services/data_engine.js";
+import { calculateSMA, calculateATR } from "../../indicators.js";
 import { analyzeStructure, detectFVG } from "../smc_strategy.js";
-import { systemState, getCurrentKillzone } from "../engine.js";
+import { systemState, getCurrentKillzone } from "../../services/engine.js";
 
 // Helper to find areas of interest on H1
 function findSnDAreas(candles: OHLC[], trend: "UPTREND" | "DOWNTREND") {
@@ -157,7 +157,7 @@ export async function runXauUsdSnDEngulfing(
       return null;
     }
 
-    const closesH1 = h1Candles.map((c) => c.close);
+    const closesH1 = h1Candles.map((c: any) => c.close);
     const ma50 = calculateSMA(closesH1, 50);
     const ma200 = calculateSMA(closesH1, 200);
 

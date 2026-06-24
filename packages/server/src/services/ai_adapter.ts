@@ -154,8 +154,9 @@ class GoogleGeminiProvider implements AIProvider {
       let toolCalls: any[] = [];
 
       for await (const chunk of result.stream) {
-        if (chunk.functionCalls) {
-          toolCalls.push(...chunk.functionCalls());
+        const functionCalls = chunk.functionCalls();
+        if (functionCalls) {
+          toolCalls.push(...functionCalls);
         }
         const chunkText = chunk.text();
         if(chunkText) {

@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { addSystemError } from './engine.js';
+import { addSystemError } from './services/engine.js';
 
 let supabaseClient: any = null;
 

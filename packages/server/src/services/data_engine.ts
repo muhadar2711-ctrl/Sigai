@@ -2,7 +2,7 @@ import axios from "axios";
 import YahooFinance from "yahoo-finance2";
 const yahooFinance = new (YahooFinance as any)();
 import WebSocket from "ws";
-import { sendTelegramMessage } from "./telegram.js";
+import { sendTelegramMessage } from "../telegram.js";
 import { addSystemError, systemState, updateLivePrice } from "./engine.js";
 
 export interface OHLC {

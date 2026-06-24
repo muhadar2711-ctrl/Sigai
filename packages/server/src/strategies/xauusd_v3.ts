@@ -1,7 +1,7 @@
-import { OHLC, fetchMarketData } from "../data_engine.js";
-import { calculateEMA, calculateRSI, calculateATR } from "../indicators.js";
+import { OHLC, fetchMarketData } from "../../services/data_engine.js";
+import { calculateEMA, calculateRSI, calculateATR } from "../../indicators.js";
 import { detectFVG, analyzeStructure } from "../smc_strategy.js";
-import { systemState, getCurrentKillzone } from "../engine.js";
+import { systemState, getCurrentKillzone } from "../../services/engine.js";
 
 export async function runXauUsdSMCV3(symbol: string = "XAU/USD") {
   const strategyKey = `smc_v3_${symbol}`;
@@ -69,7 +69,7 @@ export async function runXauUsdSMCV3(symbol: string = "XAU/USD") {
     const h4Structure = analyzeStructure(h4Candles);
     const h1Structure = analyzeStructure(h1Candles);
 
-    const h1Closes = h1Candles.map((c) => c.close);
+    const h1Closes = h1Candles.map((c: any) => c.close);
     const h1Ema50 = calculateEMA(h1Closes, 50);
     const currH1Ema50 = h1Ema50[h1Ema50.length - 1];
     const currH1Price = h1Closes[h1Closes.length - 1];
@@ -91,7 +91,7 @@ export async function runXauUsdSMCV3(symbol: string = "XAU/USD") {
 
     state.setupState.step2_HTFBias = htfBias;
 
-    const m5Closes = m5Candles.map((c) => c.close);
+    const m5Closes = m5Candles.map((c: any) => c.close);
     const m5Ema20 = calculateEMA(m5Closes, 20);
     const m5Ema50 = calculateEMA(m5Closes, 50);
     const m5Rsi = calculateRSI(m5Closes, 14);

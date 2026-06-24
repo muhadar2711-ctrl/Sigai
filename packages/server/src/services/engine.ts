@@ -1,25 +1,25 @@
 import cron from "node-cron";
 import { toZonedTime } from "date-fns-tz";
 import { fetchMarketData, OHLC, initializeDataFeed } from "./data_engine.js";
-import { calculateATR } from "./smc_strategy.js";
-import { checkNewsBlock } from "./news_engine.js";
-import { validateSignalWithAI } from "./ai_engine.js";
+import { calculateATR } from "../strategies/smc_strategy.js";
+import { checkNewsBlock } from "../news_engine.js";
+import { validateSignalWithAI } from "../routes/ai_engine.js";
 import {
   sendTelegramSignal,
   initTelegram,
   sendTelegramMessage,
   sendTelegramUpdate,
-} from "./telegram.js";
-import { executeTrade } from "./execution.js";
-import { getFirestore } from "./firebase.js";
-import { getSupabase, initSupabase } from "./supabase.js";
-import { db, initDB } from "./db.js";
-import { validateNewsEntry } from "./news_strategy.js";
-import { runXauUsdSMCV3 } from "./strategies/xauusd_v3.js";
-import { runLondonM15SMC } from "./strategies/london_m15_smc.js";
-import { runSMCV1 } from "./strategies/smc_v1.js";
-import { runXauUsdSnDEngulfing } from "./strategies/xauusd_snd_engulfing.js";
-import { activePositionManager } from "./position_manager.js";
+} from "../telegram.js";
+import { executeTrade } from "../execution.js";
+import { getFirestore } from "../firebase.js";
+import { getSupabase, initSupabase } from "../supabase.js";
+import { db, initDB } from "../db.js";
+import { validateNewsEntry } from "../news_strategy.js";
+import { runXauUsdSMCV3 } from "../strategies/xauusd_v3.js";
+import { runLondonM15SMC } from "../strategies/london_m15_smc.js";
+import { runSMCV1 } from "../strategies/smc_v1.js";
+import { runXauUsdSnDEngulfing } from "../strategies/xauusd_snd_engulfing.js";
+import { activePositionManager } from "../position_manager.js";
 import { EAWebhookBridge } from "./execution/ea_webhook.js";
 
 const TIMEZONE = "Asia/Makassar";
