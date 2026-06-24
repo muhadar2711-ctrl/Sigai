@@ -10,11 +10,11 @@
     "dev": "concurrently \"npm:dev:client\" \"npm:dev:server\"",
     "dev:client": "cd packages/client && vite",
     "dev:server": "ts-node-dev --respawn --transpile-only --exit-child packages/server/src/server.ts",
-    "clean": "rimraf packages/client/dist packages/server/dist",
+    "clean": "rimraf dist",
     "build:client": "cd packages/client && vite build",
     "build:server": "tsc -p packages/server/tsconfig.json",
     "build": "npm run clean && npm run build:client && npm run build:server",
-    "start": "node packages/server/dist/server.js",
+    "start": "node dist/server/server.js",
     "preview": "cd packages/client && vite preview"
   },
   "dependencies": {

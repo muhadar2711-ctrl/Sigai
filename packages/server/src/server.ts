@@ -77,7 +77,7 @@ async function startServer() {
 
   // --- Server untuk File Statis (Hanya di Produksi) ---
   if (process.env.NODE_ENV === 'production') {
-    const clientBuildPath = path.join(process.cwd(), 'packages/client/dist');
+    const clientBuildPath = path.join(process.cwd(), 'dist/client');
     app.use(express.static(clientBuildPath));
 
     // Fallback ke index.html untuk Single Page Application
