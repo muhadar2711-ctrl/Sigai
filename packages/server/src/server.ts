@@ -21,7 +21,7 @@ app.use(express.json());
 
 // --- PRODUCTION FRONTEND SERVING ---
 // Determine the path to the client build directory
-const clientBuildPath = path.resolve(__dirname, '../../client');
+const clientBuildPath = path.resolve(__dirname, '../client');
 
 // Serve static files from the React app
 app.use(express.static(clientBuildPath));
