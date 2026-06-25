@@ -7,7 +7,6 @@ import { validateSignalWithAI } from "../routes/ai_engine.js";
 import { checkNewsBlock } from "../news_engine.js";
 import { TradeSignal, StrategyStatus, StrategyState } from "../strategies/types.js";
 
-// --- Step 7: Prevent Overlapping Executions ---
 let isEngineRunning = false;
 
 async function runStrategies() {
@@ -47,15 +46,13 @@ async function runStrategies() {
                     console.log(`[ENGINE] Signal found for ${strat.config.symbol} by ${strat.name}.`);
                     updateStrategyState(strat.strategyId, { status: StrategyStatus.SIGNAL_READY, lastSignal: signal });
 
-                    // Perform AI Validation
                     const { verdict, reason } = await validateSignalWithAI(signal);
-                    signal.ai_verdict = verdict;
+                    // FIX: Ensure the verdict string is correctly typed
+                    signal.ai_verdict = verdict as 'APPROVED' | 'REJECTED' | 'PENDING';
                     signal.ai_reason = reason;
 
-                    // Check for news block
                     const isNewsBlocked = await checkNewsBlock(signal.symbol);
 
-                    // Final Decision Point
                     if (verdict === "APPROVED" && !isNewsBlocked) {
                         console.log(`[ENGINE] Signal for ${signal.symbol} APPROVED. Sending to Telegram.`);
                         await sendTelegramSignal(signal, systemState);
@@ -74,7 +71,7 @@ async function runStrategies() {
         }
         console.log("[ENGINE] Strategy run complete.");
     } finally {
-        isEngineRunning = false; // Release the lock
+        isEngineRunning = false;
         setSystemStatus("IDLE");
     }
 }
@@ -100,14 +97,12 @@ export function bootstrapSystem() {
         return acc;
     }, {} as { [key: string]: StrategyState });
 
-    // Use a safer interval implementation
     const runCycle = () => {
         runStrategies().catch(err => {
             console.error("[ENGINE_CRITICAL] Unhandled error in runStrategies loop:", err);
         });
     };
 
-    // Initial run, then set interval
     runCycle();
     setInterval(runCycle, 60000); 
 

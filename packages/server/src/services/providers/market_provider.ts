@@ -68,7 +68,8 @@ export async function fetchTimeSeriesData(symbol: string, interval: string, look
     if (!response.ok || responseText.includes('"status":"error"')) {
         console.error(`[MARKET_PROVIDER_DEBUG] Failed Response for ${symbol}`);
         console.error(`> Status: ${response.status}`);
-        console.error(`> URL: ${url.replace(API_KEY, '[REDACTED]')}`);
+        // FIX: Use null-safe fallback for API_KEY
+        console.error(`> URL: ${url.replace(API_KEY ?? '', '[REDACTED]')}`);
         console.error(`> Response Body: ${responseText.substring(0, 1000)}`);
         addSystemError('PROVIDER_API_ERROR', { 
             provider: PROVIDER_NAME, 

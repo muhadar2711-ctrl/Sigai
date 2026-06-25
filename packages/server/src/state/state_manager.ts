@@ -1,47 +1,38 @@
-import { StrategyState, Killzone, TradeSignal } from "../strategies/types.js";
-import { OHLC } from "../services/data_engine.js";
 
-// Centralized state for the entire system
-export const systemState: {
-  activeSignal: any | null;
-  signalsHistory: any[];
-  systemErrors: any[];
-  lastScan: Date | null;
-  isNewsBlocked: boolean;
-  engineMode: string;
-  robotStatus: string;
-  autotrade: any;
-  prices: { [key: string]: number };
-  strategies: { [key: string]: StrategyState };
-  market_context: { killzone: Killzone };
-  data: { marketData: { [key: string]: { lastUpdate: string; candles: OHLC[] } } };
-} = {
-  activeSignal: null,
-  signalsHistory: [],
-  systemErrors: [],
-  lastScan: null,
-  isNewsBlocked: false,
-  engineMode: "STANDARD",
-  robotStatus: "OFF",
-  autotrade: {
-    enabled: false,
-    tradeMode: "MANUAL",
-    executionProvider: "NONE",
-  },
-  prices: { "XAU/USD": 0, "EUR/USD": 0 },
-  strategies: {},
-  market_context: { killzone: { session: "NONE", active: false, timeframe: "" } },
-  data: { marketData: {} },
+// FIX: Corrected import path
+import { Killzone, StrategyState, Trade } from "../strategies/types.js";
+
+// --- System State ---
+export interface SystemState {
+    status: 'BOOTSTRAPPING' | 'RUNNING' | 'IDLE' | 'STOPPED';
+    lastUpdate: string;
+    activeKillzones: string[];
+    killzones: Killzone[];
+    errors: { code: string; details: any; timestamp: string }[];
+    data: { marketData: { [symbol: string]: { lastUpdate: string; candles: any[] } } };
+    strategies: { [key: string]: StrategyState };
+    isNewsBlocked: { [symbol: string]: boolean };
+}
+
+export let systemState: SystemState = {
+    status: "STOPPED",
+    lastUpdate: new Date().toISOString(),
+    activeKillzones: [],
+    killzones: [
+        { name: "London", start: "08:00", end: "17:00" },
+        { name: "New York", start: "13:00", end: "22:00" },
+        { name: "Asian", start: "00:00", end: "09:00" },
+    ],
+    errors: [],
+    data: { marketData: {} },
+    strategies: {},
+    isNewsBlocked: {},
 };
 
-// Centralized error logging function
-export function addSystemError(message: string, meta?: any) {
-  console.error(`[SYSTEM_ERROR] ${message}`, meta || '');
-  systemState.systemErrors.unshift({ time: new Date().toISOString(), message, meta: meta || null });
-  // Keep the error log from growing indefinitely
-  if (systemState.systemErrors.length > 100) {
-    systemState.systemErrors.pop();
-  }
+// --- State Management Functions ---
+export function addSystemError(code: string, details: any) {
+    console.error(`[SYSTEM_ERROR] Code: ${code}`, details);
+    systemState.errors.push({ code, details, timestamp: new Date().toISOString() });
 }
 
 export function updateStrategyState(strategyId: string, updates: Partial<StrategyState>) {
@@ -50,13 +41,15 @@ export function updateStrategyState(strategyId: string, updates: Partial<Strateg
     }
 }
 
-export function setSystemStatus(status: string) {
-    systemState.robotStatus = status;
+export function setSystemStatus(status: SystemState['status']) {
+    systemState.status = status;
 }
 
-export function addSignalToHistory(signal: TradeSignal) {
-    systemState.signalsHistory.unshift(signal);
-    if (systemState.signalsHistory.length > 100) {
-        systemState.signalsHistory.pop();
+// FIX: Add back the findLastTrade function needed by news_strategy
+export function findLastTrade(strategyId: string): Trade | undefined {
+    const strategy = systemState.strategies[strategyId];
+    if (strategy && strategy.trades.length > 0) {
+        return strategy.trades[strategy.trades.length - 1];
     }
+    return undefined;
 }

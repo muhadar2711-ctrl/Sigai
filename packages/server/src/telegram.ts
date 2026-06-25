@@ -1,57 +1,46 @@
 
-import { Telegraf } from "telegraf";
-import { systemState, addSystemError } from "./state/state_manager.js";
-import { TradeSignal } from "./strategies/types.js";
+import TelegramBot from 'node-telegram-bot-api';
+import { TradeSignal } from './strategies/types.js'; // FIX: Corrected import path
+import { SystemState } from './state/state_manager.js'; // FIX: Corrected import path
 
-const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN || "");
-const chatId = process.env.TELEGRAM_CHAT_ID || "";
+const token = process.env.TELEGRAM_BOT_TOKEN || '';
+const chatId = process.env.TELEGRAM_CHAT_ID || '';
+const bot = new TelegramBot(token);
 
-export async function sendTelegramSignal(signal: TradeSignal, state: typeof systemState) {
-    // WAJIB: Guard Clause untuk mencegah crash runtime
-    if (
-        !signal ||
-        typeof signal.entry !== 'number' ||
-        typeof signal.sl !== 'number' ||
-        typeof signal.tp !== 'number' ||
-        typeof signal.rrRatio !== 'number' ||
-        typeof signal.confidence !== 'number'
-    ) {
-        addSystemError("TELEGRAM_INVALID_SIGNAL_DATA", { 
-            error: "Incomplete or invalid signal object received.",
-            signalData: signal // Log the problematic signal data
-        });
-        console.error("[TELEGRAM] Aborted sending signal due to incomplete data:", signal);
-        return; // Hentikan eksekusi untuk mencegah crash
-    }
-
-    if (!chatId) {
-        addSystemError("TELEGRAM_SEND_FAILED", { error: "Chat ID not configured" });
-        return;
-    }
-
+export async function sendTelegramSignal(signal: TradeSignal, state: SystemState): Promise<void> {
     try {
+        const { 
+            strategyName,
+            symbol,
+            action, 
+            price,
+            stopLoss,
+            takeProfit,
+            rrRatio,
+            ai_verdict, 
+            ai_reason 
+        } = signal;
+
+        const verdictIcon = ai_verdict === 'APPROVED' ? '✅' : '❌';
+        const actionIcon = action === 'BUY' ? '🟢' : '🔴';
+
         const message = `
-        🚨 *New Signal: ${signal.strategy}*
-        
-        *Symbol:* ${signal.symbol}
-        *Type:* ${signal.type}
-        *Entry:* ${signal.entry.toFixed(2)}
-        *Stop Loss:* ${signal.sl.toFixed(2)}
-        *Take Profit:* ${signal.tp.toFixed(2)}
-        *R/R Ratio:* ${signal.rrRatio.toFixed(2)}
+${actionIcon} *${action} Signal: ${symbol}*
 
-        *Confidence:* ${(signal.confidence * 100).toFixed(0)}%
-        *AI Verdict:* ${signal.ai_verdict || "N/A"}
-        *AI Reason:* ${signal.ai_reason || "N/A"}
+*Strategy:* ${strategyName}
+*Entry Price:* ${price}
+*Stop Loss:* ${stopLoss}
+*Take Profit:* ${takeProfit}
+*Risk/Reward Ratio:* ${rrRatio?.toFixed(2)}
 
-        *Signal ID:* \`${signal.id || "N/A"}\`
+*AI Validation:* ${verdictIcon} ${ai_verdict}
+*AI Reason:* ${ai_reason || 'N/A'}
         `;
 
-        await bot.telegram.sendMessage(chatId, message, { parse_mode: "Markdown" });
-        console.log(`[TELEGRAM] Signal ${signal.id} sent successfully.`);
+        await bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+        console.log(`[TELEGRAM] Signal for ${symbol} sent successfully.`);
 
-    } catch (error: any) {
-        console.error("[TELEGRAM] Error sending signal:", error);
-        addSystemError("TELEGRAM_SEND_FAILED", { error: error.message, signalId: signal.id });
+    } catch (error) {
+        console.error('[TELEGRAM] Failed to send signal:', error);
     }
 }
