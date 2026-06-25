@@ -1,4 +1,4 @@
-import { OHLC } from "./services/data_engine.js";
+import { OHLC } from "./strategies/types.js";
 
 // SMA
 export function calculateSMA(data: number[], period: number): number[] {

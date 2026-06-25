@@ -1,6 +1,5 @@
 
-import { OHLC } from "../services/data_engine.js";
-import { Strategy, TradeSignal, StrategyConfig } from "./types.js";
+import { OHLC, Strategy, TradeSignal, StrategyConfig } from "./types.js";
 
 // ... (all helper functions like detectSwing, detectLiquiditySweep, etc. remain unchanged) ...
 export function detectSwing(
@@ -52,23 +51,22 @@ export function validateEntry(candles: OHLC[], structureState: any, fvg: any) {
     return { signalType: null };
 }
 
-// FIX: Correct the structure and export as default
 const smcStrategy: Strategy = {
   name: "SMC Strategy (Base)",
   strategyId: "smc_strategy_base",
   enabled: false, 
   config: {
-    // FIX: Add missing strategyId
     strategyId: "smc_strategy_base",
+    name: "SMC Strategy (Base)",
     symbol: "EURUSD",
     ltfTimeframe: "M15",
     ltfLookback: 100,
   },
-  async run(data: any[], config: StrategyConfig): Promise<TradeSignal | null> {
+  async run(candles: OHLC[], config: StrategyConfig): Promise<TradeSignal | null> {
     console.log(`Running base SMC strategy for ${config.symbol}`)
-    const structure = analyzeStructure(data);
-    const fvg = detectFVG(data);
-    const entry = validateEntry(data, structure, fvg);
+    const structure = analyzeStructure(candles);
+    const fvg = detectFVG(candles);
+    const entry = validateEntry(candles, structure, fvg);
 
     if (entry && entry.signalType) {
         // ... create and return a TradeSignal

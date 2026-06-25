@@ -1,0 +1,14 @@
+{
+  "name": "sigai-server",
+  "version": "1.0.0",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "express": "^4.17.21"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  }
+}

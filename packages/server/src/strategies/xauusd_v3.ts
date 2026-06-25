@@ -1,26 +1,22 @@
 
-import { TradeSignal, StrategyConfig, Strategy } from "./types.js";
+import { StrategyConfig, Strategy, OHLC } from "./types.js";
 
-// FIX: Correct the structure and export as default
-const xauusdV3: Strategy = {
-  name: "XAUUSD V3",
-  strategyId: "xauusd_v3",
-  enabled: true,
-  config: {
-    // FIX: Add missing strategyId
-    strategyId: "xauusd_v3",
-    symbol: "XAUUSD",
-    ltfTimeframe: "M15",
-    ltfLookback: 100,
-    htfTimeframe: "H4",
-    htfLookback: 50,
-    slOffset: 2,
-    rrRatio: 2
-  },
-  async run(data: any[], config: StrategyConfig): Promise<TradeSignal | null> {
-    // ... logic would go here
-    return null;
-  },
+const strategyConfig: StrategyConfig = {
+    strategyId: "XAUUSD_V3",
+    name: "XAU/USD V3",
+    symbol: "XAU/USD",
+    ltfTimeframe: "H4", // FIX: Corrected typo from htfTimeframe to ltfTimeframe
+    ltfLookback: 200,
 };
 
-export default xauusdV3;
+const strategy: Strategy = {
+    ...strategyConfig,
+    enabled: true,
+    config: strategyConfig, // FIX: Add the config object
+    run: async (candles: OHLC[], config: any) => {
+        // Strategy logic goes here
+        return null;
+    },
+};
+
+export default strategy;

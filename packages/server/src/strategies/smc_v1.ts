@@ -1,26 +1,23 @@
 
-import { TradeSignal, StrategyConfig, Strategy } from "./types.js";
+import { StrategyConfig, Strategy } from "./types.js";
 
-// FIX: Correct the structure and export as default
-const smcV1: Strategy = {
-  name: "SMC V1",
-  strategyId: "smc_v1",
-  enabled: true,
-  config: {
-    // FIX: Add missing strategyId
-    strategyId: "smc_v1",
-    symbol: "XAUUSD",
+const strategyConfig: StrategyConfig = {
+    strategyId: "SMC_V1",
+    name: "SMC V1", // FIX: Add missing name
+    symbol: "XAU/USD",
     ltfTimeframe: "M15",
-    ltfLookback: 100,
-    htfTimeframe: "H4",
-    htfLookback: 50,
-    slOffset: 2,
-    rrRatio: 2
-  },
-  async run(data: any[], config: StrategyConfig): Promise<TradeSignal | null> {
-    // ... logic would go here
-    return null;
-  },
+    ltfLookback: 200,
 };
 
-export default smcV1;
+const strategy: Strategy = {
+    ...strategyConfig,
+    enabled: true,
+    config: strategyConfig, // FIX: Add the config object
+    run: async (candles, config) => {
+        // Strategy logic goes here
+        return null;
+    },
+};
+
+// FIX: Use default export
+export default strategy;

@@ -1,27 +1,23 @@
 
-import { TradeSignal, StrategyConfig, Strategy } from "./types.js";
+import { StrategyConfig, Strategy } from "./types.js";
+import { findSwings, isBreakOfStructure, isChangeOfCharacter } from "./smc_strategy.js";
 
-// FIX: Correct the structure and export as default
-const londonM15SMC: Strategy = {
-  name: "London M15 SMC",
-  strategyId: "london_m15_smc",
-  enabled: true,
-  config: {
-    // FIX: Add missing strategyId
-    strategyId: "london_m15_smc",
-    symbol: "XAUUSD",
+const strategyConfig: StrategyConfig = {
+    strategyId: "LONDON_M15_SMC",
+    name: "London M15 SMC",
+    symbol: "XAU/USD",
     ltfTimeframe: "M15",
-    ltfLookback: 100,
-    // strategy-specific properties are allowed
-    htfTimeframe: "H4", 
-    htfLookback: 50, 
-    slOffset: 2, 
-    rrRatio: 2
-  },
-  async run(data: any[], config: StrategyConfig): Promise<TradeSignal | null> {
-    // ... logic would go here
-    return null;
-  },
+    ltfLookback: 200,
 };
 
-export default londonM15SMC;
+const strategy: Strategy = {
+    ...strategyConfig,
+    enabled: true,
+    config: strategyConfig, // FIX: Add the config object
+    run: async (candles, config) => {
+        // Strategy logic goes here
+        return null;
+    },
+};
+
+export default strategy;

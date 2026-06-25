@@ -1,38 +1,30 @@
+ 
+import { StrategyState, Killzone, StrategyStatus, Trade } from "../strategies/types.js";
 
-// FIX: Corrected import path
-import { Killzone, StrategyState, Trade } from "../strategies/types.js";
-
-// --- System State ---
-export interface SystemState {
-    status: 'BOOTSTRAPPING' | 'RUNNING' | 'IDLE' | 'STOPPED';
-    lastUpdate: string;
-    activeKillzones: string[];
-    killzones: Killzone[];
-    errors: { code: string; details: any; timestamp: string }[];
-    data: { marketData: { [symbol: string]: { lastUpdate: string; candles: any[] } } };
+interface SystemState {
+    status: "IDLE" | "RUNNING" | "BOOTSTRAPPING" | "ERROR";
+    errors: { code: string; metadata: any; timestamp: string }[];
     strategies: { [key: string]: StrategyState };
-    isNewsBlocked: { [symbol: string]: boolean };
 }
 
-export let systemState: SystemState = {
-    status: "STOPPED",
-    lastUpdate: new Date().toISOString(),
-    activeKillzones: [],
-    killzones: [
-        { name: "London", start: "08:00", end: "17:00" },
-        { name: "New York", start: "13:00", end: "22:00" },
-        { name: "Asian", start: "00:00", end: "09:00" },
-    ],
+let systemState: SystemState = {
+    status: "BOOTSTRAPPING",
     errors: [],
-    data: { marketData: {} },
-    strategies: {},
-    isNewsBlocked: {},
+    strategies: {}
 };
 
-// --- State Management Functions ---
-export function addSystemError(code: string, details: any) {
-    console.error(`[SYSTEM_ERROR] Code: ${code}`, details);
-    systemState.errors.push({ code, details, timestamp: new Date().toISOString() });
+// ... (keep the rest of the file the same until the function)
+
+export function getSystemState() {
+    return systemState;
+}
+
+export function setSystemStatus(status: "IDLE" | "RUNNING" | "BOOTSTRAPPING" | "ERROR") {
+    systemState.status = status;
+}
+
+export function addSystemError(code: string, metadata: any) {
+    systemState.errors.push({ code, metadata, timestamp: new Date().toISOString() });
 }
 
 export function updateStrategyState(strategyId: string, updates: Partial<StrategyState>) {
@@ -41,15 +33,15 @@ export function updateStrategyState(strategyId: string, updates: Partial<Strateg
     }
 }
 
-export function setSystemStatus(status: SystemState['status']) {
-    systemState.status = status;
-}
-
-// FIX: Add back the findLastTrade function needed by news_strategy
-export function findLastTrade(strategyId: string): Trade | undefined {
+export function addTradeToStrategy(strategyId: string, trade: Trade) {
     const strategy = systemState.strategies[strategyId];
-    if (strategy && strategy.trades.length > 0) {
-        return strategy.trades[strategy.trades.length - 1];
+    if (strategy) {
+        if (!strategy.trades) {
+            strategy.trades = [];
+        }
+        strategy.trades.push(trade);
+        strategy.performance.dailyTrades = strategy.trades.length;
+        // FIX: Added type definition for the lambda parameter
+        strategy.performance.winrate = (strategy.trades.filter((t: Trade) => t.pnl && t.pnl > 0).length / strategy.trades.length) * 100;
     }
-    return undefined;
 }
