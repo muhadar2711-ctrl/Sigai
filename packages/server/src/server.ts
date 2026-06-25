@@ -19,8 +19,6 @@ const __dirname = path.dirname(__filename);
 app.use(cors());
 app.use(express.json());
 
-initFirebase();
-
 // --- PRODUCTION FRONTEND SERVING ---
 // Determine the path to the client build directory
 const clientBuildPath = path.resolve(__dirname, '../../client');
@@ -33,8 +31,8 @@ app.use("/api/state", stateRoutes);
 app.use("/api/ai", aiRouter);
 
 // Health check route
-app.get("/api/health", (req: Request, res: Response) => {
-  res.send("OK");
+app.get("/health", (req: Request, res: Response) => {
+  res.status(200).send("OK");
 });
 
 // The "catchall" handler: for any request that doesn't match one above,
@@ -43,8 +41,16 @@ app.get('*', (req: Request, res: Response) => {
   res.sendFile(path.resolve(clientBuildPath, 'index.html'));
 });
 
-
-app.listen(port, () => {
-  console.log(`[HTTP] Server is running on port ${port}`);
+app.listen(port, "0.0.0.0", () => {
+  console.log(`[HTTP] Server is listening on port ${port}`);
+  
+  try {
+    initFirebase();
+    console.log("[FIREBASE] Firebase initialized successfully.");
+  } catch (error) {
+    console.error("[FIREBASE] Firebase initialization failed:", error);
+  }
+  
+  console.log("[SYSTEM] Bootstrapping system...");
   bootstrapSystem();
 });
