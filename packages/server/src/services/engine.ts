@@ -5,65 +5,78 @@ import { getMarketData, OHLC } from "./data_engine.js";
 import { sendTelegramSignal } from "../telegram.js";
 import { validateSignalWithAI } from "../routes/ai_engine.js";
 import { checkNewsBlock } from "../news_engine.js";
-// PERBAIKAN: Impor StrategyState dan tipe lainnya langsung dari 'source of truth'
 import { TradeSignal, StrategyStatus, StrategyState } from "../strategies/types.js";
 
+// --- Step 7: Prevent Overlapping Executions ---
+let isEngineRunning = false;
+
 async function runStrategies() {
-    setSystemStatus("RUNNING");
-    console.log("[ENGINE] Running strategies...");
+    if (isEngineRunning) {
+        console.log("[ENGINE] Previous execution is still running. Skipping this cycle.");
+        return;
+    }
 
-    const strategies = getAllStrategies();
-    for (const strat of strategies) {
-        if (!strat.enabled) continue;
+    isEngineRunning = true;
+    try {
+        setSystemStatus("RUNNING");
+        console.log("[ENGINE] Running strategies...");
 
-        try {
-            updateStrategyState(strat.strategyId, { status: StrategyStatus.SCANNING });
+        const strategies = getAllStrategies();
+        for (const strat of strategies) {
+            if (!strat.enabled) continue;
 
-            const data: OHLC[] = await getMarketData(
-                strat.config.symbol,
-                strat.config.ltfTimeframe,
-                strat.config.ltfLookback
-            );
+            try {
+                updateStrategyState(strat.strategyId, { status: StrategyStatus.SCANNING });
 
-            if (!data || data.length === 0) {
-                console.log(`[ENGINE] No data for ${strat.config.symbol}, skipping strategy.`);
-                continue;
-            }
+                const data: OHLC[] = await getMarketData(
+                    strat.config.symbol,
+                    strat.config.ltfTimeframe,
+                    strat.config.ltfLookback
+                );
 
-            console.log(`[ENGINE] Running [${strat.name}] for ${strat.config.symbol}...`);
-            const signal: TradeSignal | null = await strat.run(data, strat.config);
-
-            if (signal) {
-                console.log(`[ENGINE] Signal found for ${strat.config.symbol} by ${strat.name}.`);
-                updateStrategyState(strat.strategyId, { status: StrategyStatus.SIGNAL_READY, lastSignal: signal });
-
-                // Perform AI Validation
-                const { verdict, reason } = await validateSignalWithAI(signal);
-                signal.ai_verdict = verdict;
-                signal.ai_reason = reason;
-
-                // Check for news block
-                const isNewsBlocked = await checkNewsBlock(signal.symbol);
-
-                // Final Decision Point
-                if (verdict === "APPROVED" && !isNewsBlocked) {
-                    console.log(`[ENGINE] Signal for ${signal.symbol} APPROVED and not blocked by news. Sending to Telegram.`);
-                    // The signal object now correctly matches the TradeSignal type
-                    await sendTelegramSignal(signal, systemState);
-                } else {
-                    console.log(`[ENGINE] Signal for ${signal.symbol} REJECTED by AI or blocked by news.`);
+                if (data.length === 0) {
+                    console.log(`[ENGINE] No data for ${strat.config.symbol}, skipping strategy.`);
+                    updateStrategyState(strat.strategyId, { status: StrategyStatus.IDLE, lastMessage: "No market data." });
+                    continue;
                 }
 
-            } else {
-                updateStrategyState(strat.strategyId, { status: StrategyStatus.IDLE });
+                console.log(`[ENGINE] Running [${strat.name}] for ${strat.config.symbol}...`);
+                const signal: TradeSignal | null = await strat.run(data, strat.config);
+
+                if (signal) {
+                    console.log(`[ENGINE] Signal found for ${strat.config.symbol} by ${strat.name}.`);
+                    updateStrategyState(strat.strategyId, { status: StrategyStatus.SIGNAL_READY, lastSignal: signal });
+
+                    // Perform AI Validation
+                    const { verdict, reason } = await validateSignalWithAI(signal);
+                    signal.ai_verdict = verdict;
+                    signal.ai_reason = reason;
+
+                    // Check for news block
+                    const isNewsBlocked = await checkNewsBlock(signal.symbol);
+
+                    // Final Decision Point
+                    if (verdict === "APPROVED" && !isNewsBlocked) {
+                        console.log(`[ENGINE] Signal for ${signal.symbol} APPROVED. Sending to Telegram.`);
+                        await sendTelegramSignal(signal, systemState);
+                    } else {
+                        console.log(`[ENGINE] Signal for ${signal.symbol} REJECTED or BLOCKED.`);
+                    }
+
+                } else {
+                    updateStrategyState(strat.strategyId, { status: StrategyStatus.IDLE, lastMessage: "No signal generated." });
+                }
+            } catch (error: any) {
+                console.error(`[ENGINE] Error running strategy ${strat.name}:`, error);
+                addSystemError("STRATEGY_EXECUTION_ERROR", { strategy: strat.name, error: error.message });
+                updateStrategyState(strat.strategyId, { status: StrategyStatus.ERROR, lastMessage: error.message });
             }
-        } catch (error: any) {
-            console.error(`[ENGINE] Error running strategy ${strat.name}:`, error);
-            addSystemError("STRATEGY_EXECUTION_ERROR", { strategy: strat.name, error: error.message });
-            updateStrategyState(strat.strategyId, { status: StrategyStatus.ERROR });
         }
+        console.log("[ENGINE] Strategy run complete.");
+    } finally {
+        isEngineRunning = false; // Release the lock
+        setSystemStatus("IDLE");
     }
-    console.log("[ENGINE] Strategy run complete.");
 }
 
 export function bootstrapSystem() {
@@ -72,7 +85,6 @@ export function bootstrapSystem() {
 
     const strategies = getAllStrategies();
     
-    // Correctly initialize strategies as an object with strategyId as keys
     systemState.strategies = strategies.reduce((acc, s: Strategy) => {
         acc[s.strategyId] = {
             name: s.name,
@@ -80,22 +92,24 @@ export function bootstrapSystem() {
             enabled: s.enabled,
             status: StrategyStatus.ON,
             setupState: {},
-            performance: {
-                dailyTrades: 0,
-                wins: 0,
-                losses: 0,
-                winrate: 0,
-                dailyPnl: 0,
-            },
+            performance: { dailyTrades: 0, wins: 0, losses: 0, winrate: 0, dailyPnl: 0 },
             debugAudit: {},
             lastSignal: null,
+            lastMessage: "System initialized.",
         };
         return acc;
     }, {} as { [key: string]: StrategyState });
 
+    // Use a safer interval implementation
+    const runCycle = () => {
+        runStrategies().catch(err => {
+            console.error("[ENGINE_CRITICAL] Unhandled error in runStrategies loop:", err);
+        });
+    };
+
     // Initial run, then set interval
-    runStrategies();
-    setInterval(runStrategies, 60000); // Run every 60 seconds
+    runCycle();
+    setInterval(runCycle, 60000); 
 
     console.log("[ENGINE] System bootstrapped and running.");
 }
