@@ -10,7 +10,7 @@ import { getSupabase } from './supabase.js';
 import aiRouter from './routes/ai_engine.js';
 
 const app = express();
-const port = process.env.PORT || 3001;
+const port = Number(process.env.PORT) || 3001;
 
 // ES Module-safe way to get __dirname
 const __filename = fileURLToPath(import.meta.url);
