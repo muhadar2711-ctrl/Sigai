@@ -1,11 +1,12 @@
 
-import { systemState, addSystemError, updateStrategyState, setSystemStatus, StrategyState } from "../state/state_manager.js";
+import { systemState, addSystemError, updateStrategyState, setSystemStatus } from "../state/state_manager.js";
 import { getAllStrategies, Strategy } from "../strategies/index.js";
 import { getMarketData, OHLC } from "./data_engine.js";
 import { sendTelegramSignal } from "../telegram.js";
 import { validateSignalWithAI } from "../routes/ai_engine.js";
 import { checkNewsBlock } from "../news_engine.js";
-import { TradeSignal, StrategyStatus } from "../strategies/types.js";
+// PERBAIKAN: Impor StrategyState dan tipe lainnya langsung dari 'source of truth'
+import { TradeSignal, StrategyStatus, StrategyState } from "../strategies/types.js";
 
 async function runStrategies() {
     setSystemStatus("RUNNING");
