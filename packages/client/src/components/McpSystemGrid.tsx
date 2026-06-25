@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { getMcpStatus } from '../lib/api';
+// import { getMcpStatus } from '../lib/api'; // DITONAKTIFKAN SEMENTARA
 import { cn } from "../lib/utils";
 
 // --- Kontrak Data Baru ---
@@ -10,11 +10,6 @@ interface MSystemStatus {
   [systemName: string]: string;
 }
 
-interface McpApiResponse {
-  status: string;
-  systems?: MSystemStatus;
-  // Mungkin ada field lain, tapi kita hanya peduli pada ini
-}
 
 // --- Logika Tampilan ---
 const statusStyles: { [key: string]: string } = {
@@ -43,35 +38,36 @@ const getStatusStyle = (status: string) => {
 
 const McpSystemGrid: React.FC = () => {
   const [systems, setSystems] = useState<MSystemStatus | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>("Fitur MCP dinonaktifkan sementara.");
 
-  useEffect(() => {
-    const fetchStatus = async () => {
-      try {
-        setError(null);
-        const data: McpApiResponse = await getMcpStatus();
+  // DITONAKTIFKAN SEMENTARA SAMPAI BACKEND DIPERBAIKI
+  // useEffect(() => {
+  //   const fetchStatus = async () => {
+  //     try {
+  //       setError(null);
+  //       const data: McpApiResponse = await getMcpStatus();
 
-        // Kontrak baru yang andal: 'systems' adalah sumber kebenaran
-        if (data.systems && typeof data.systems === 'object') {
-          setSystems(data.systems);
-        } else {
-          // Jika field 'systems' tidak ada, mungkin backend M itu sendiri yang offline
-          console.warn('Respons status MCP tidak berisi field `systems` yang valid.');
-          setSystems({ 'M-Backend': data.status || 'UNAVAILABLE' });
-        }
-      } catch (err: any) {
-        console.error('Gagal memuat status sistem MCP:', err);
-        setError(err.message || 'Gagal memuat status sistem MCP.');
-        // Set status error agar pengguna tahu ada masalah koneksi
-        setSystems({ 'MCP-Gateway': 'OFFLINE' });
-      }
-    };
+  //       // Kontrak baru yang andal: 'systems' adalah sumber kebenaran
+  //       if (data.systems && typeof data.systems === 'object') {
+  //         setSystems(data.systems);
+  //       } else {
+  //         // Jika field 'systems' tidak ada, mungkin backend M itu sendiri yang offline
+  //         console.warn('Respons status MCP tidak berisi field `systems` yang valid.');
+  //         setSystems({ 'M-Backend': data.status || 'UNAVAILABLE' });
+  //       }
+  //     } catch (err: any) {
+  //       console.error('Gagal memuat status sistem MCP:', err);
+  //       setError(err.message || 'Gagal memuat status sistem MCP.');
+  //       // Set status error agar pengguna tahu ada masalah koneksi
+  //       setSystems({ 'MCP-Gateway': 'OFFLINE' });
+  //     }
+  //   };
 
-    fetchStatus();
-    const interval = setInterval(fetchStatus, 15000); // Poll setiap 15 detik
+  //   fetchStatus();
+  //   const interval = setInterval(fetchStatus, 15000); // Poll setiap 15 detik
 
-    return () => clearInterval(interval);
-  }, []);
+  //   return () => clearInterval(interval);
+  // }, []);
 
   const renderStatusPill = (label: string, status: string) => (
     <div className="flex items-center justify-between p-3 bg-brand-bg-sec/50 border border-brand-border/40 rounded-lg shadow-sm">
@@ -85,7 +81,7 @@ const McpSystemGrid: React.FC = () => {
 
   if (error && !systems) {
     return (
-       <div className="p-4 bg-brand-danger/10 text-brand-danger rounded-lg text-center font-mono text-sm">
+       <div className="p-4 bg-brand-warning/10 text-brand-warning rounded-lg text-center font-mono text-sm">
          {error}
        </div>
     );

@@ -45,6 +45,15 @@ export interface StrategyConfig {
   rrRatio: number;
 }
 
+// *** BARU DITAMBAHKAN ***
+export interface Strategy {
+  name: string;
+  strategyId: string;
+  enabled: boolean;
+  config: StrategyConfig;
+  run: (data: any[], config: StrategyConfig) => Promise<TradeSignal | null>;
+}
+
 export interface Killzone {
   session: "Asian" | "London" | "New York" | "NONE";
   active: boolean;

@@ -1,4 +1,6 @@
+
 import { OHLC } from "../services/data_engine.js";
+import { Strategy, TradeSignal, StrategyConfig } from "./types.js";
 
 // Returns High if Swing High, Low if Swing Low, else null
 export function detectSwing(
@@ -276,7 +278,7 @@ export function calculateFibonacci(swingLow: number, swingHigh: number) {
     fib0: swingHigh,
     fib100: swingLow,
     fib50: swingHigh - diff * 0.5,
-    fib618: swingHigh - diff * 0.618,
+    fib618: `swingHigh - diff * 0.618,`
   };
 }
 
@@ -345,3 +347,25 @@ export function validateEntry(candles: OHLC[], structureState: any, fvg: any) {
     }
   };
 }
+
+// *** BARU DITAMBAHKAN: Implementasi Strategi Dummy ***
+export const smc_strategy: Strategy = {
+  name: "SMC Strategy (Dummy)",
+  strategyId: "smc_strategy",
+  enabled: false, // Dinonaktifkan secara default
+  config: {
+    symbol: "EUR/USD",
+    htfTimeframe: "H4",
+    ltfTimeframe: "M15",
+    htfLookback: 50,
+    ltfLookback: 100,
+    slOffset: 2,
+    rrRatio: 2,
+  },
+  async run(data: any[], config: StrategyConfig): Promise<TradeSignal | null> {
+    console.log("Menjalankan strategi SMC (Dummy), tidak ada logika yang diimplementasikan.");
+    // Logika strategi yang sebenarnya akan ada di sini.
+    // Untuk saat ini, ia tidak akan pernah menghasilkan sinyal.
+    return null;
+  },
+};

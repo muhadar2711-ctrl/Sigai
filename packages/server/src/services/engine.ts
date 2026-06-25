@@ -1,5 +1,5 @@
 
-import { systemState, addSystemError, updateStrategyState, setSystemStatus } from "../state/state_manager.js";
+import { systemState, addSystemError, updateStrategyState, setSystemStatus, StrategyState } from "../state/state_manager.js";
 import { getAllStrategies, Strategy } from "../strategies/index.js";
 import { getMarketData, OHLC } from "./data_engine.js";
 import { sendTelegramSignal } from "../telegram.js";
@@ -70,22 +70,27 @@ export function bootstrapSystem() {
     console.log("[ENGINE] Bootstrapping system...");
 
     const strategies = getAllStrategies();
-    systemState.strategies = strategies.map((s: Strategy) => ({
-        name: s.name,
-        strategyId: s.strategyId,
-        enabled: s.enabled,
-        status: StrategyStatus.ON,
-        setupState: {},
-        performance: {
-            dailyTrades: 0,
-            wins: 0,
-            losses: 0,
-            winrate: 0,
-            dailyPnl: 0,
-        },
-        debugAudit: {},
-        lastSignal: null,
-    }));
+    
+    // Correctly initialize strategies as an object with strategyId as keys
+    systemState.strategies = strategies.reduce((acc, s: Strategy) => {
+        acc[s.strategyId] = {
+            name: s.name,
+            strategyId: s.strategyId,
+            enabled: s.enabled,
+            status: StrategyStatus.ON,
+            setupState: {},
+            performance: {
+                dailyTrades: 0,
+                wins: 0,
+                losses: 0,
+                winrate: 0,
+                dailyPnl: 0,
+            },
+            debugAudit: {},
+            lastSignal: null,
+        };
+        return acc;
+    }, {} as { [key: string]: StrategyState });
 
     // Initial run, then set interval
     runStrategies();

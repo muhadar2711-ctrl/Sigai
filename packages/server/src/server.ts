@@ -1,42 +1,48 @@
 
 import express, { Request, Response } from 'express';
 import cors from 'cors';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { bootstrapSystem } from './services/engine.js';
 import stateRoutes from "./routes/state_router.js";
 import { initFirebase } from './firebase.js';
 import { getSupabase } from './supabase.js';
-import aiRouter from './routes/ai_engine.js'; // Corrected import
+import aiRouter from './routes/ai_engine.js';
 
 const app = express();
 const port = process.env.PORT || 3001;
+
+// ES Module-safe way to get __dirname
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 app.use(cors());
 app.use(express.json());
 
 initFirebase();
 
-// Basic uptime check
-app.get("/"), (req: Request, res: Response) => {
-  res.send("OK");
-}
+// --- PRODUCTION FRONTEND SERVING ---
+// Determine the path to the client build directory
+const clientBuildPath = path.resolve(__dirname, '../../client');
 
-app.get('/supabase-test', async (req: Request, res: Response) => {
-  const supabase = getSupabase();
-  if (!supabase) {
-    return res.status(500).send('Supabase not initialized');
-  }
-  try {
-    const { data, error } = await supabase.from('your_table').select('*');
-    if (error) throw error;
-    res.json(data);
-  } catch (error) {
-    res.status(500).send(error);
-  }
-});
+// Serve static files from the React app
+app.use(express.static(clientBuildPath));
 
 // API routes
-app.use("/state", stateRoutes);
-app.use("/ai", aiRouter); // Use the imported router
+app.use("/api/state", stateRoutes);
+app.use("/api/ai", aiRouter);
+
+// Health check route
+app.get("/api/health", (req: Request, res: Response) => {
+  res.send("OK");
+});
+
+// The "catchall" handler: for any request that doesn't match one above,
+// send back React's index.html file.
+app.get('*', (req: Request, res: Response) => {
+  res.sendFile(path.resolve(clientBuildPath, 'index.html'));
+});
+
 
 app.listen(port, () => {
   console.log(`[HTTP] Server is running on port ${port}`);

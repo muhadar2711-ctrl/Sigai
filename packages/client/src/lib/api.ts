@@ -1,5 +1,5 @@
 
-import { TradeSignal } from '../../server/services/ai_adapter';
+// import { TradeSignal } from '../../server/services/ai_adapter';
 
 /**
  * Generic API fetch wrapper
@@ -61,41 +61,43 @@ export const sendChatMessage = async (
 
 /**
  * FUNGSI BARU: Mengeksekusi sinyal perdagangan melalui endpoint terpusat
+ * @todo - Implementasikan endpoint backend /api/v1/trade/execute
  */
-export const executeTrade = async (signal: TradeSignal) => {
-  const response = await fetch('/api/v1/trade/execute', { // Endpoint baru yang aman
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      // Otentikasi harus ditangani oleh middleware di backend jika diperlukan
-    },
-    body: JSON.stringify(signal),
-  });
+// export const executeTrade = async (signal: TradeSignal) => {
+//   const response = await fetch('/api/v1/trade/execute', { // Endpoint baru yang aman
+//     method: 'POST',
+//     headers: {
+//       'Content-Type': 'application/json',
+//       // Otentikasi harus ditangani oleh middleware di backend jika diperlukan
+//     },
+//     body: JSON.stringify(signal),
+//   });
 
-  if (!response.ok) {
-    const errorBody = await response.text();
-    console.error('Gagal mengeksekusi perdagangan:', response.status, errorBody);
-    throw new Error(`Gagal mengeksekusi perdagangan. Status: ${response.status}`);
-  }
+//   if (!response.ok) {
+//     const errorBody = await response.text();
+//     console.error('Gagal mengeksekusi perdagangan:', response.status, errorBody);
+//     throw new Error(`Gagal mengeksekusi perdagangan. Status: ${response.status}`);
+//   }
 
-  return response.json();
-};
+//   return response.json();
+// };
 
 /**
  * FUNGSI DIPERBARUI: Mengambil status gabungan dari server M
+ * @todo - Implementasikan endpoint backend /api/mcp/status
  */
-export const getMcpStatus = async () => {
-  const response = await fetch('/api/mcp/status'); // Endpoint baru yang andal
-  if (!response.ok) {
-    // Coba parse body error jika ada untuk pesan yang lebih baik
-    const errorData = await response.json().catch(() => null);
-    if (errorData && errorData.error) {
-      throw new Error(errorData.error);
-    }
-    throw new Error('Gagal mengambil status MCP');
-  }
-  return response.json();
-};
+// export const getMcpStatus = async () => {
+//   const response = await fetch('/api/mcp/status'); // Endpoint baru yang andal
+//   if (!response.ok) {
+//     // Coba parse body error jika ada untuk pesan yang lebih baik
+//     const errorData = await response.json().catch(() => null);
+//     if (errorData && errorData.error) {
+//       throw new Error(errorData.error);
+//     }
+//     throw new Error('Gagal mengambil status MCP');
+//   }
+//   return response.json();
+// };
 
 // Fungsi getBalance dan getPositions telah usang dan dihapus.
 // Status akun sekarang menjadi bagian dari respons getMcpStatus.
