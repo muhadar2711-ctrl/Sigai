@@ -2,7 +2,7 @@
 import { Router } from 'express';
 import { systemState } from '../../state/state_manager.js';
 
-const router = Router();
+const aiRouter = Router(); // Export this router
 
 // AI-powered signal validation
 export async function validateSignalWithAI(signal: any): Promise<{verdict: string, reason: string}> {
@@ -19,7 +19,7 @@ export async function validateSignalWithAI(signal: any): Promise<{verdict: strin
 }
 
 
-router.post('/validate', async (req, res) => {
+aiRouter.post('/validate', async (req, res) => {
     const signal = req.body;
     if (!signal) {
         return res.status(400).json({ error: 'Signal data is required' });
@@ -32,4 +32,4 @@ router.post('/validate', async (req, res) => {
     }
 });
 
-export default router;
+export default aiRouter; // Default export

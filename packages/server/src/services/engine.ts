@@ -1,137 +1,95 @@
 
-import cron from "node-cron";
-import { fetchMarketData, OHLC, initializeDataFeed } from "./data_engine.js";
-import { checkNewsBlock } from "../news_engine.js";
+import { systemState, addSystemError, updateStrategyState, setSystemStatus } from "../state/state_manager.js";
+import { getAllStrategies } from "../strategies/index.js";
+import { getMarketData } from "./data_engine.js";
+import { sendTelegramSignal } from "../telegram.js";
 import { validateSignalWithAI } from "../routes/ai_engine.js";
-import { sendTelegramSignal, initTelegram } from "../telegram.js";
-import { executeTrade } from "../execution.js";
-import { getSupabase, initSupabase } from "../supabase.js";
-import { db, initDB } from "../db.js";
+import { checkNewsBlock } from "../news_engine.js";
+import { TradeSignal, StrategyStatus } from "../strategies/types.js";
 
-import { initialize_XAUUSD_SMC_V3, execute_XAUUSD_SMC_V3 } from "../strategies/xauusd_v3.js";
-import { initialize_LONDON_M15_SMC, execute_LONDON_M15_SMC } from "../strategies/london_m15_smc.js";
-import { initialize_SMC_V1, execute_SMC_V1 } from "../strategies/smc_v1.js";
-import { initialize_XAUUSD_SND_ENGULFING, execute_XAUUSD_SND_ENGULFING } from "../strategies/xauusd_snd_engulfing.js";
+async function runStrategies() {
+    setSystemStatus("RUNNING");
+    console.log("[ENGINE] Running strategies...");
 
-import { StrategyState, TradeSignal, Killzone } from "../strategies/types.js";
-import { systemState, addSystemError } from "../state/state_manager.js"; // Corrected Import
+    const strategies = getAllStrategies();
+    for (const strat of strategies) {
+        if (!strat.enabled) continue;
 
-let isInitialized = false;
-let isSystemLocked = false;
+        try {
+            updateStrategyState(strat.strategyId, { status: StrategyStatus.SCANNING });
 
-const notifiedSignals: Set<string> = new Set();
+            const data = await getMarketData(
+                strat.config.symbol,
+                strat.config.ltfTimeframe,
+                strat.config.ltfLookback
+            );
 
-function getSignalKey(signal: TradeSignal): string {
-  return `${signal.symbol}_${signal.type}_${signal.entry}`.toUpperCase();
-}
+            if (!data || data.length === 0) {
+                console.log(`[ENGINE] No data for ${strat.config.symbol}, skipping strategy.`);
+                continue;
+            }
 
-export async function bootstrapSystem() {
-  if (isInitialized) return;
-  try {
-    initDB();
-    initSupabase();
-    initializeEngines();
-    isInitialized = true;
-    console.log(`[${new Date().toISOString()}] [BOOTSTRAP] System Integrated & State-Driven Pipeline Online.`);
-  } catch (e:any) {
-    console.error(`[${new Date().toISOString()}] [BOOTSTRAP FATAL]`, e);
-    addSystemError("BOOTSTRAP_FATAL", {error: e.message});
-  }
-}
+            console.log(`[ENGINE] Running [${strat.name}] for ${strat.config.symbol}...`);
+            const signal = await strat.run(data, strat.config);
 
-export function initializeEngines() {
-  try {
-    systemState.strategies["XAUUSD_SMC_V3"] = initialize_XAUUSD_SMC_V3();
-    systemState.strategies["LONDON_M15_SMC"] = initialize_LONDON_M15_SMC();
-    systemState.strategies["SMC_V1"] = initialize_SMC_V1();
-    systemState.strategies["XAUUSD_SND_ENGULFING"] = initialize_XAUUSD_SND_ENGULFING();
-    console.log('[PIPELINE] Initialized strategies:', Object.keys(systemState.strategies).join(', '));
+            if (signal) {
+                console.log(`[ENGINE] Signal found for ${strat.config.symbol} by ${strat.name}.`);
+                updateStrategyState(strat.strategyId, { status: StrategyStatus.SIGNAL_READY, lastSignal: signal });
 
-    initTelegram();
-    initializeDataFeed();
+                // Perform AI Validation
+                const { verdict, reason } = await validateSignalWithAI(signal);
+                signal.ai_verdict = verdict;
+                signal.ai_reason = reason;
 
-    cron.schedule("* * * * *", async () => {
-      if (systemState.robotStatus === "EMERGENCY_STOP" || isSystemLocked) return;
-      isSystemLocked = true;
-      
-      try {
-        console.log(`[PIPELINE] Scanning for setups...`);
-        systemState.lastScan = new Date();
-        systemState.market_context.killzone = getCurrentKillzone();
+                // Check for news block
+                const isNewsBlocked = await checkNewsBlock(signal.symbol);
 
-        const signalPromises = [
-            execute_XAUUSD_SMC_V3(),
-            execute_LONDON_M15_SMC(),
-            execute_SMC_V1(),
-            execute_XAUUSD_SND_ENGULFING(),
-        ];
-        
-        const signals = await Promise.all(signalPromises);
-        const validSignals = signals.filter(s => s !== null) as TradeSignal[];
+                // Final Decision Point
+                if (verdict === "APPROVED" && !isNewsBlocked) {
+                    console.log(`[ENGINE] Signal for ${signal.symbol} APPROVED and not blocked by news. Sending to Telegram.`);
+                    // The signal object now correctly matches the TradeSignal type
+                    await sendTelegramSignal(signal, systemState);
+                } else {
+                    console.log(`[ENGINE] Signal for ${signal.symbol} REJECTED by AI or blocked by news.`);
+                }
 
-        for (const signal of validSignals) {
-            console.log(`[PIPELINE] Signal Candidate Found by ${signal.strategy}`, signal);
-            await dispatchFinalSignal(signal);
+            } else {
+                updateStrategyState(strat.strategyId, { status: StrategyStatus.IDLE });
+            }
+        } catch (error: any) {
+            console.error(`[ENGINE] Error running strategy ${strat.name}:`, error);
+            addSystemError("STRATEGY_EXECUTION_ERROR", { strategy: strat.name, error: error.message });
+            updateStrategyState(strat.strategyId, { status: StrategyStatus.ERROR });
         }
-
-      } catch (e: any) {
-        addSystemError("MAIN_PIPELINE_CRASH", { error: e.message, stack: e.stack });
-      } finally {
-        isSystemLocked = false;
-      }
-    });
-
-  } catch (error: any) {
-    addSystemError('ENGINE_INITIALIZATION_FAILED', { error: error.message });
-  }
+    }
+    console.log("[ENGINE] Strategy run complete.");
 }
 
-async function dispatchFinalSignal(signal: TradeSignal) {
-  const signalKey = getSignalKey(signal);
-  if (notifiedSignals.has(signalKey)) return;
+export function bootstrapSystem() {
+    setSystemStatus("BOOTSTRAPPING");
+    console.log("[ENGINE] Bootstrapping system...");
 
-  const aiResult = { verdict: "APPROVED", reason: "Auto-approved during testing." };
+    const strategies = getAllStrategies();
+    systemState.strategies = strategies.map(s => ({
+        name: s.name,
+        strategyId: s.strategyId,
+        enabled: s.enabled,
+        status: StrategyStatus.ON,
+        setupState: {},
+        performance: {
+            dailyTrades: 0,
+            wins: 0,
+            losses: 0,
+            winrate: 0,
+            dailyPnl: 0,
+        },
+        debugAudit: {},
+        lastSignal: null,
+    }));
 
-  const finalizedSignal = {
-    ...signal,
-    id: `SIG_${Date.now()}`,
-    ai_verdict: aiResult.verdict,
-    ai_reason: aiResult.reason,
-    status: "ACTIVE",
-    timestamp: new Date().toISOString()
-  };
+    // Initial run, then set interval
+    runStrategies();
+    setInterval(runStrategies, 60000); // Run every 60 seconds
 
-  await sendTelegramSignal(finalizedSignal, systemState);
-  notifiedSignals.add(signalKey);
-  saveSignalToHistoryAndDB(finalizedSignal);
-  
-  if (systemState.autotrade.enabled && systemState.robotStatus === "ON") {
-    await executeTrade(finalizedSignal, systemState.autotrade);
-  }
-}
-
-export function getCurrentKillzone(): Killzone {
-  const now = new Date();
-  const utcHour = now.getUTCHours();
-  if (utcHour >= 1 && utcHour < 7) return { session: "Asian", active: true, timeframe: "01-07z" };
-  if (utcHour >= 7 && utcHour < 10) return { session: "London", active: true, timeframe: "07-10z" };
-  if (utcHour >= 13 && utcHour < 16) return { session: "New York", active: true, timeframe: "13-16z" };
-  return { session: "NONE", active: false, timeframe: "" };
-}
-
-async function saveSignalToHistoryAndDB(signal: any) {
-  systemState.signalsHistory.unshift(signal);
-  if (systemState.signalsHistory.length > 50) systemState.signalsHistory.pop();
-  const supabase = getSupabase();
-  if (supabase) {
-      const { error } = await supabase.from("signals").upsert(signal);
-      if (error) addSystemError("SAVE_TO_SUPABASE_FAILED", { error });
-  }
-  try {
-    db.prepare(`INSERT INTO signals (id, symbol, type, status, strategy, timestamp, entry, sl, tp, rrRatio, confidence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-      signal.id, signal.symbol, signal.type, signal.status, signal.strategy, signal.timestamp, signal.entry, signal.sl, signal.tp, signal.rrRatio, signal.confidence
-    );
-  } catch (e: any) {
-    addSystemError("SAVE_TO_SQLITE_FAILED", { error: e.message, signalId: signal.id });
-  }
+    console.log("[ENGINE] System bootstrapped and running.");
 }

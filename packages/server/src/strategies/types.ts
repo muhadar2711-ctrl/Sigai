@@ -1,20 +1,14 @@
 
-import { OHLC } from "../services/data_engine.js";
-
-// FIX: Expanded to include all legacy and modern statuses for successful compilation.
 export enum StrategyStatus {
+  ON = "ON",
   OFF = "OFF",
-  IDLE = "IDLE",
   SCANNING = "SCANNING",
-  SIGNAL = "SIGNAL",
+  IDLE = "IDLE",
+  SIGNAL_READY = "SIGNAL_READY",
   ERROR = "ERROR",
-  CRASHED = "CRASHED",
-  MONITORING = "MONITORING",   // Legacy status
-  SIGNAL_READY = "SIGNAL_READY", // Legacy status
 }
 
 export enum MarketBias {
-  AWAITING = "AWAITING",
   BULLISH = "BULLISH",
   BEARISH = "BEARISH",
   NEUTRAL = "NEUTRAL",
@@ -25,50 +19,19 @@ export enum SignalType {
   SELL = "SELL",
 }
 
-export interface FVGZone {
-  high: number;
-  low: number;
-}
-
-export interface StrategySetupState {
-  [key: string]: any;
-}
-
-export interface StrategyPerformance {
-  dailyTrades: number;
-  wins: number;
-  losses: number;
-  winrate: number;
-  dailyPnl: number;
-}
-
-export interface StrategyState {
-  name: string;
-  strategyId: string;
-  enabled: boolean;
-  status: StrategyStatus;
-  setupState: StrategySetupState;
-  performance: StrategyPerformance;
-  debugAudit: { [key: string]: any };
-  lastSignal?: TradeSignal | null;
-}
-
-// FIX: Standardized to a single 'tp' (Take Profit). This is the single source of truth.
 export interface TradeSignal {
+  id?: string; // Optional: To be added later in the pipeline
   type: SignalType;
   entry: number;
   sl: number;
   tp: number;
+  tp1?: number; // Make tp1 optional as it seems to be missing in some places
   strategy: string;
   confidence: number;
   symbol: string;
   rrRatio: number;
-}
-
-export interface Killzone {
-  session: string;
-  active: boolean;
-  timeframe: string;
+  ai_verdict?: string; // Optional: Added by AI engine
+  ai_reason?: string;  // Optional: Added by AI engine
 }
 
 export interface StrategyConfig {
@@ -77,13 +40,30 @@ export interface StrategyConfig {
   ltfTimeframe: string;
   htfLookback: number;
   ltfLookback: number;
-  smcLookback: number;
+  smcLookback?: number;
   slOffset: number;
   rrRatio: number;
 }
 
-export interface FVG {
-  type: 'bullish' | 'bearish';
-  zone: FVGZone;
-  candleIndex: number;
+export interface Killzone {
+  session: "Asian" | "London" | "New York" | "NONE";
+  active: boolean;
+  timeframe: string;
+}
+
+export interface StrategyState {
+  name: string;
+  strategyId: string;
+  enabled: boolean;
+  status: StrategyStatus;
+  setupState: any;
+  performance: {
+    dailyTrades: number;
+    wins: number;
+    losses: number;
+    winrate: number;
+    dailyPnl: number;
+  };
+  debugAudit: any;
+  lastSignal: TradeSignal | null;
 }

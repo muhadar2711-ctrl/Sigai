@@ -1,6 +1,6 @@
 
 import { initializeApp, cert } from 'firebase-admin/app';
-import { systemState, addSystemError } from './services/engine.js'; // Will be corrected by the final engine fix
+import { systemState, addSystemError } from './state/state_manager.js'; 
 
 export function initFirebase() {
     try {
