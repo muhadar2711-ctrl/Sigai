@@ -1,6 +1,6 @@
 
 import { Router } from 'express';
-import { systemState } from '../../state/state_manager.js';
+import { systemState } from '../state/state_manager.js';
 
 const aiRouter = Router(); // Export this router
 

@@ -1,1 +1,0 @@
-declare module './providers/twelvedata.js';

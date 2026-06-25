@@ -20,18 +20,18 @@ export enum SignalType {
 }
 
 export interface TradeSignal {
-  id?: string; // Optional: To be added later in the pipeline
+  id: string; 
   type: SignalType;
   entry: number;
   sl: number;
   tp: number;
-  tp1?: number; // Make tp1 optional as it seems to be missing in some places
+  tp1: number; 
   strategy: string;
   confidence: number;
   symbol: string;
   rrRatio: number;
-  ai_verdict?: string; // Optional: Added by AI engine
-  ai_reason?: string;  // Optional: Added by AI engine
+  ai_verdict: string; 
+  ai_reason: string;  
 }
 
 export interface StrategyConfig {

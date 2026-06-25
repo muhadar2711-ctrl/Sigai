@@ -1,7 +1,7 @@
 
 import { systemState, addSystemError, updateStrategyState, setSystemStatus } from "../state/state_manager.js";
-import { getAllStrategies } from "../strategies/index.js";
-import { getMarketData } from "./data_engine.js";
+import { getAllStrategies, Strategy } from "../strategies/index.js";
+import { getMarketData, OHLC } from "./data_engine.js";
 import { sendTelegramSignal } from "../telegram.js";
 import { validateSignalWithAI } from "../routes/ai_engine.js";
 import { checkNewsBlock } from "../news_engine.js";
@@ -18,7 +18,7 @@ async function runStrategies() {
         try {
             updateStrategyState(strat.strategyId, { status: StrategyStatus.SCANNING });
 
-            const data = await getMarketData(
+            const data: OHLC[] = await getMarketData(
                 strat.config.symbol,
                 strat.config.ltfTimeframe,
                 strat.config.ltfLookback
@@ -30,7 +30,7 @@ async function runStrategies() {
             }
 
             console.log(`[ENGINE] Running [${strat.name}] for ${strat.config.symbol}...`);
-            const signal = await strat.run(data, strat.config);
+            const signal: TradeSignal | null = await strat.run(data, strat.config);
 
             if (signal) {
                 console.log(`[ENGINE] Signal found for ${strat.config.symbol} by ${strat.name}.`);
@@ -70,7 +70,7 @@ export function bootstrapSystem() {
     console.log("[ENGINE] Bootstrapping system...");
 
     const strategies = getAllStrategies();
-    systemState.strategies = strategies.map(s => ({
+    systemState.strategies = strategies.map((s: Strategy) => ({
         name: s.name,
         strategyId: s.strategyId,
         enabled: s.enabled,

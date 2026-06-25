@@ -1,5 +1,5 @@
-
-import { StrategyState, Killzone } from "./strategies/types.js";
+import { StrategyState, Killzone, TradeSignal } from "../strategies/types.js";
+import { OHLC } from "../services/data_engine.js";
 
 // Centralized state for the entire system
 export const systemState: {
@@ -14,6 +14,7 @@ export const systemState: {
   prices: { [key: string]: number };
   strategies: { [key: string]: StrategyState };
   market_context: { killzone: Killzone };
+  data: { marketData: { [key: string]: { lastUpdate: string; candles: OHLC[] } } };
 } = {
   activeSignal: null,
   signalsHistory: [],
@@ -29,7 +30,8 @@ export const systemState: {
   },
   prices: { "XAU/USD": 0, "EUR/USD": 0 },
   strategies: {},
-  market_context: { killzone: { session: "", active: false, timeframe: "" } },
+  market_context: { killzone: { session: "NONE", active: false, timeframe: "" } },
+  data: { marketData: {} },
 };
 
 // Centralized error logging function
@@ -40,4 +42,21 @@ export function addSystemError(message: string, meta?: any) {
   if (systemState.systemErrors.length > 100) {
     systemState.systemErrors.pop();
   }
+}
+
+export function updateStrategyState(strategyId: string, updates: Partial<StrategyState>) {
+    if (systemState.strategies[strategyId]) {
+        Object.assign(systemState.strategies[strategyId], updates);
+    }
+}
+
+export function setSystemStatus(status: string) {
+    systemState.robotStatus = status;
+}
+
+export function addSignalToHistory(signal: TradeSignal) {
+    systemState.signalsHistory.unshift(signal);
+    if (systemState.signalsHistory.length > 100) {
+        systemState.signalsHistory.pop();
+    }
 }

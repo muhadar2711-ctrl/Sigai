@@ -2,7 +2,21 @@
 import { systemState, addSystemError } from "../state/state_manager.js";
 import { TwelveData } from './providers/twelvedata.js';
 
-const td = new TwelveData(process.env.TWELVEDATA_API_KEY);
+export interface OHLC {
+    timestamp: string;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume: number;
+}
+
+const apiKey = process.env.TWELVEDATA_API_KEY;
+if (!apiKey) {
+  throw new Error("TWELVEDATA_API_KEY environment variable is not set.");
+}
+const td = new TwelveData(apiKey);
+
 
 // ... (rest of the file remains the same)
 

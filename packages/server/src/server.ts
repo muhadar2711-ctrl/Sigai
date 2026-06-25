@@ -1,8 +1,8 @@
 
-import express from 'express';
+import express, { Request, Response } from 'express';
 import cors from 'cors';
 import { bootstrapSystem } from './services/engine.js';
-import stateRoutes from "./routes/state_routes.js";
+import stateRoutes from "./routes/state_router.js";
 import { initFirebase } from './firebase.js';
 import { getSupabase } from './supabase.js';
 import aiRouter from './routes/ai_engine.js'; // Corrected import
@@ -16,11 +16,11 @@ app.use(express.json());
 initFirebase();
 
 // Basic uptime check
-app.get("/"), (req, res) => {
+app.get("/"), (req: Request, res: Response) => {
   res.send("OK");
 }
 
-app.get('/supabase-test', async (req, res) => {
+app.get('/supabase-test', async (req: Request, res: Response) => {
   const supabase = getSupabase();
   if (!supabase) {
     return res.status(500).send('Supabase not initialized');
